@@ -1,0 +1,33 @@
+{
+  "name": "oon-cold-cover",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Owner-Operator Cold-Asset Network MVP: Cold Cover (dispatch) + Proof Vault (append-only evidence ledger)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --import tsx --watch src/server.ts",
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --import tsx src/server.ts",
+    "migrate": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --import tsx src/cli/migrate.ts",
+    "seed": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --import tsx src/cli/seed.ts",
+    "verify-ledger": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --import tsx src/cli/verify.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --import tsx --test --test-concurrency=1 test/*.test.ts"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "multer": "^2.4.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^22.20.4",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
