@@ -24,8 +24,8 @@ import { ethers } from "ethers";
 
 const GENESIS_REGISTRY_ADDRESS = "0xYourGenesisRegistryV2ContractAddressHere";
 const GENESIS_REGISTRY_ABI = [
-  "function anchorProof(bytes32 _evidenceHash, string calldata _ipfsCID, string calldata _proofType) external",
-  "function verifyProof(bytes32 _evidenceHash) external view returns (bool isValid, string memory ipfsCID, string memory proofType, uint256 timestamp, address issuer, uint8 status)",
+  "function anchorProof(bytes32 _evidenceHash, string calldata _ipfsCID, string calldata _proofType, uint256 _expiresAt) external",
+  "function verifyProof(bytes32 _evidenceHash) external view returns (bool isValid, string memory ipfsCID, string memory proofType, uint256 timestamp, uint256 expiresAt, address issuer, uint8 status)",
 ];
 
 const TABS = ["dashboard", "quantum", "vault", "ai_audit"];
@@ -93,7 +93,8 @@ export default function App() {
       const tx = await contract.anchorProof(
         "0x" + quantumResult.manifest.digest.value,
         quantumResult.ipfsCid || "",
-        quantumResult.manifest.proof_type || "QUANTUM_GHZ"
+        quantumResult.manifest.proof_type || "QUANTUM_GHZ_EXECUTION",
+        0 // expiresAt: 0 = never expires; pass a future unix timestamp for a time-limited proof
       );
       setStatusMsg({ ok: true, text: "Transaction submitted: " + tx.hash + " — waiting for confirmation…" });
       await tx.wait();

@@ -10,7 +10,7 @@ tested (see **Status** below) from the originally pasted draft.
 | | Base flow (`../`) | This enterprise layer |
 |---|---|---|
 | Runs where | iPhone + Colab + Pinata, no server | Your own backend + a React frontend |
-| Contract ABI | `anchor(string,bytes32)` / `latest()` | `anchorProof(bytes32,string,string)` / `verifyProof(bytes32)` |
+| Contract ABI | `anchor(string,bytes32)` / `latest()` | `anchorProof(bytes32,string,string,uint256)` / `verifyProof(bytes32)` |
 | Canonicalization | one fixed-format quantum-output string, hashed as-is | RFC 8785 (JCS), via `jcs` (Python) / `canonicalize` (JS) |
 
 **Do not mix the two ABIs.** Pick one contract (`../contracts/GenesisRegistry.sol`
@@ -205,34 +205,135 @@ pass/fail badge: `INVALID MANIFEST`, `DIGEST MISMATCH`, `SIGNATURE INVALID`,
 `PROOF REVOKED`, `CHAIN CHECK FAILED`, `CHAIN CHECK SKIPPED — NOT CONFIGURED`,
 and only `PROVENANCE CONFIRMED` when every applicable one passed.
 
+## v3: manifest schema, proof types, demo mode, lifecycle/expiry
+
+A further specification asked for a domain-agnostic manifest schema, support
+for multiple evidence domains, a clearly-marked demo mode, and an expiry
+concept in the registry. Added:
+
+- **Manifest v4 schema** (`ProofEngine.build_proof_manifest`): every
+  manifest now carries `proof_id` (UUID), `schema_version` (per proof type),
+  `canonicalization: {name, version}`, `signer: {type, id}`, `ipfs:
+  {cid, gateway_urls}` and `blockchain: {network, chain_id,
+  contract_address, tx_hash, block_number, anchored_hash}` — both `null`
+  until a real anchor transaction actually mines — and `lifecycle:
+  {status, revoked_at, expires_at}`. `ProofEngine.record_anchor(...)` fills
+  in `ipfs`/`blockchain` after the fact and has **no default value for any
+  argument**, so there is no way to accidentally fill in a plausible-looking
+  placeholder transaction hash.
+- **Proof-type validation** (`ProofEngine.validate_payload`, called before
+  signing — never after): `QUANTUM_GHZ_EXECUTION`, `AI_VISIBILITY_AUDIT`,
+  `CREDENTIAL_VERIFICATION`, `BUSINESS_EVIDENCE` each require their own
+  domain-specific fields; an incomplete payload raises `ProofEngineError`
+  before it can ever reach a signed manifest (see
+  `test_fails_closed_on_incomplete_domain_payload`). This is presence
+  checking, not a full JSON Schema validator, and is documented as such.
+- **Demo mode**: `ProofEngine.build_demo_manifest(...)` produces a manifest
+  that is cryptographically real (genuinely hashed and signed — a real
+  verifier can confirm that) but stamped `mode: "DEMO"` /
+  `verification_status: "DEMO_ONLY"` at the manifest root. `verify.html`
+  checks for this before computing a final verdict and reports `◆ DEMO
+  ONLY` no matter how cleanly the crypto checks pass — confirmed with a
+  real demo-valid/demo-tampered pair in `demo/`, both run through a real
+  headless `verify.html` (see **Status**).
+- **Lifecycle + expiry on `GenesisRegistryV2`**: `anchorProof` takes an
+  `_expiresAt` (0 = never). `Expired` is a **derived** status, never
+  stored — a record's on-chain `status` field only ever holds NonExistent,
+  Active or Revoked, so the history of real state transitions stays
+  immutable, while `verifyProof`'s returned status reflects the true
+  current effective state (Active records past their `expiresAt` read as
+  Expired). `revokeProof` on an expired-but-not-yet-revoked record now
+  correctly reverts (`NotActive`) rather than succeeding or reviving it.
+  `anchorProof` also now rejects an `_expiresAt` already in the past.
+- **`verify.html` rewritten** around the full granular checklist a later
+  spec asked for: `[PASS]`/`[FAIL]`/`[WARN]`/`[SKIP]`/`[DEMO]` rows for
+  manifest retrieval, schema validity, canonicalization, digest match,
+  signature presence *and* validity (checked separately — see **Protocol
+  v2** above for why "present" and "valid" must never be collapsed into
+  one check), issuer-key presence, provider-execution-record-supplied (with
+  an explicit `PROVENANCE UNCONFIRMED` line — this page cannot itself query
+  IBM to confirm a job actually ran), and the full on-chain set (record
+  found, hash match, CID match, proof type match, lifecycle). It also
+  renders a copyable **Verification Report** (proof id/type, digest,
+  signature algorithm/curve/key, provider/backend/job id, chain id/contract/
+  tx/anchor time, lifecycle status, methodology version, final result) with
+  links to the IPFS manifest, a best-effort block-explorer link for common
+  chain IDs, and a shareable `?cid=` verification URL — and a fixed
+  "what this does and does not establish" panel, including stating plainly
+  that it does **not** recompute the IPFS CID's multihash from the
+  retrieved bytes (`CONTENT RETRIEVED FROM GATEWAY — CID NOT LOCALLY
+  RECOMPUTED`) rather than overclaiming CID verification it isn't doing.
+
+## Scope: what's built vs. what's an integration boundary
+
+A fuller specification for this layer additionally asked for a complete
+Next.js application — `/app` routes, `/api/quantum/execute`,
+`/api/ipfs/pin`, `/api/chain/verify`, server-side secret handling, W3C
+DID/VC compliance, Vercel deployment, and more. Building that would mean
+writing server code against IBM Quantum, Pinata, and an RPC provider that
+this environment has no credentials for, and calling it "done" without ever
+running it — which is exactly the kind of overclaim this whole layer exists
+to prevent. Instead, consistent with "if a real external credential is
+required but unavailable: implement the integration boundary, provide
+`.env.example`, provide explicit setup instructions, use clearly marked
+demo mode, fail closed for production verification":
+
+- **Built and tested for real**: `ProofEngine` (the integration boundary
+  itself — the exact functions a real `/api/quantum/execute` route would
+  call), the manifest schema, proof-type validation, demo mode,
+  `GenesisRegistryV2.sol`, and `verify.html` (which needs no backend at
+  all — it's the "usable without a centralized verification database" piece
+  explicitly called for).
+- **Not built**: the Next.js app shell, its API routes, and anything
+  requiring W3C VC/DID spec compliance (the `signer`/`credential` fields
+  are shaped to be compatible with that work, not a claim of conformance to
+  it).
+- **`.env.example`** lists every secret a real deployment would need, with
+  no real values and a reminder never to expose them client-side.
+
 ## Status
 
 Verified in this environment (not just unit tests in isolation — an actual
-local chain, an actual headless-browser run of each HTML page, and
+local chain, actual headless-browser runs of each HTML page, and
 cross-library checks):
 
-- `pytest tests/test_proof_engine.py` → **7 passed**, including the two
-  regression tests above.
+- `pytest tests/test_proof_engine.py` → **12 passed**: the 7 from the v2
+  protocol-correction round plus 5 new ones covering schema shape,
+  fail-closed validation on an unknown proof type, fail-closed validation
+  on an incomplete domain payload, all four proof types accepting a minimal
+  valid payload, the demo manifest being flagged yet still cryptographically
+  genuine, and `record_anchor`'s no-default-values guarantee.
 - `GenesisRegistryV2.sol` compiles clean under solc 0.8.26 (default
-  settings — no EVM-version pin needed for a real network).
-- Deployed to a local Ganache chain; `anchorProof`, `verifyProof`, and
-  `revokeProof` (including re-revoke correctly reverting) all exercised for
-  real, not mocked.
+  settings — no EVM-version pin needed for a real network; `london` was
+  used only to work around an old local test-chain's missing PUSH0 support).
+- Deployed to a local Ganache chain and exercised for real, not mocked:
+  `anchorProof` (with and without an expiry, and rejecting an expiry
+  already in the past), `verifyProof` reporting the correct effective
+  status including the derived `Expired` state (confirmed by advancing the
+  chain's clock with `evm_increaseTime`/`evm_mine`, not just wall-clock
+  sleep — a first attempt at this test looked like it failed only because
+  no block had actually been mined to advance `block.timestamp`),
+  `revokeProof` correctly reverting on a nonexistent record, an
+  already-revoked record, and an already-expired record.
 - `master.html` run headlessly end to end (wallet connect, hash, key
   generation, assessment, manifest download) in iPhone-viewport Chromium;
   the resulting manifest's signature was independently verified by Python's
   `ecdsa` **and** by `verify.html` in a separate browser run.
-- `verify.html` exercised against: a valid manifest with no chain configured
-  (passes), a valid manifest anchored on the local chain with a matching CID
-  (passes, full chain check), a valid manifest checked against a malformed
-  contract address (correctly fails, does not fall back to "skipped"), a
-  tampered payload (correctly reports `DIGEST MISMATCH`), a manifest with no
-  `public_key` (correctly reports `SIGNATURE UNVERIFIED — KEY MISSING`, not
-  a pass), and a revoked on-chain record (correctly reports `PROOF REVOKED`).
-- `App.jsx` parses as valid JSX (esbuild) and its field references were
-  updated to match the v2 manifest shape (`manifest.digest.value`,
-  `manifest.payload.execution.*`), though the component itself still has no
-  backend or deployed contract to run against (see below).
+- `verify.html` exercised against, each in a real headless browser: a real
+  manifest anchored on the local chain with a matching CID and proof type
+  (full `CRYPTOGRAPHICALLY VERIFIED + CHAIN ANCHOR VERIFIED`), a valid
+  manifest with no chain configured (`INTEGRITY + SIGNATURE VERIFIED`, no
+  chain claim made), a valid manifest checked against a malformed contract
+  address (correctly fails, does not fall back to "skipped"), a tampered
+  payload (`DIGEST MISMATCH`), a manifest with no `public_key`
+  (`SIGNATURE UNVERIFIED — KEY MISSING`, not a pass), a revoked on-chain
+  record (`PROOF REVOKED`), and the demo-valid/demo-tampered pair in
+  `demo/` (valid demo's crypto genuinely passes but final result is still
+  `DEMO ONLY`; tampered demo correctly fails its digest check).
+- `App.jsx` parses as valid JSX (esbuild) and its ABI/field references were
+  updated to match the current manifest shape and the `_expiresAt` /
+  `expiresAt` contract signature, though the component itself still has no
+  backend or deployed contract to run against (see **Scope** above).
 
 Not verified (needs your own credentials/infra): a real IBM hardware run
 through `execute_ghz5_circuit`, an actual Sepolia/mainnet `anchorProof`

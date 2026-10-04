@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="dark">
 <title>Proof Verification Portal</title>
 <style>
-  :root { --bg:#0b0a08; --panel:#15130e; --line:#3a3220; --gold:#d4af37; --gold-hi:#f1d27a; --text:#f3e9c6; --muted:#a99d7a; --ok:#7fd18b; --bad:#ff8a7a; --warn:#e8c468; }
+  :root { --bg:#0b0a08; --panel:#15130e; --line:#3a3220; --gold:#d4af37; --gold-hi:#f1d27a; --text:#f3e9c6; --muted:#a99d7a; --ok:#7fd18b; --bad:#ff8a7a; --warn:#e8c468; --demo:#8fb8ff; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
          padding:env(safe-area-inset-top) 16px calc(32px + env(safe-area-inset-bottom)); }
@@ -22,24 +22,37 @@
   button { width:100%; margin-top:12px; min-height:48px; font:inherit; font-weight:700; color:#1a1406; cursor:pointer;
            border-radius:12px; border:1px solid #8a6d1e; background:linear-gradient(180deg,var(--gold-hi),var(--gold) 60%,#b8921f); }
   button:disabled { opacity:.5; }
+  button.secondary { background:transparent; color:var(--gold); border-color:#8a6d1e; }
   .status-list { display:none; margin-top:16px; }
   .status-row { display:flex; align-items:flex-start; gap:8px; padding:8px 0; border-top:1px solid var(--line); font-size:13px; }
   .status-row:first-child { border-top:0; }
   .dot { width:10px; height:10px; border-radius:50%; margin-top:4px; flex:0 0 auto; }
-  .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); } .dot.warn { background:var(--warn); } .dot.skip { background:#555; }
-  .label { font-weight:700; } .label.ok{color:var(--ok)} .label.bad{color:var(--bad)} .label.warn{color:var(--warn)} .label.skip{color:var(--muted)}
-  .detail { color:var(--muted); font:12px/1.5 ui-monospace,"SF Mono",Menlo,monospace; word-break:break-all; margin-top:2px; }
+  .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); } .dot.warn { background:var(--warn); } .dot.skip { background:#555; } .dot.demo { background:var(--demo); }
+  .label { font-weight:700; } .label.ok{color:var(--ok)} .label.bad{color:var(--bad)} .label.warn{color:var(--warn)} .label.skip{color:var(--muted)} .label.demo{color:var(--demo)}
+  .detail { color:var(--muted); font:12px/1.5 ui-monospace,"SF Mono",Menlo,monospace; word-break:break-all; margin-top:2px; white-space:pre-wrap; }
   .verdict { display:none; margin-top:14px; padding:12px; border-radius:10px; font-weight:800; text-align:center; letter-spacing:.04em; }
   .verdict.ok { background:rgba(127,209,139,.15); color:var(--ok); border:1px solid rgba(127,209,139,.4); }
   .verdict.bad { background:rgba(255,138,122,.15); color:var(--bad); border:1px solid rgba(255,138,122,.4); }
+  .verdict.demo { background:rgba(143,184,255,.15); color:var(--demo); border:1px solid rgba(143,184,255,.4); }
+  .banner { display:none; margin-bottom:12px; padding:10px 12px; border-radius:10px; font-weight:800; text-align:center;
+            background:rgba(143,184,255,.15); color:var(--demo); border:1px solid rgba(143,184,255,.4); letter-spacing:.04em; }
+  .report { display:none; margin-top:16px; }
+  .report dl { margin:0; display:grid; grid-template-columns:1fr; gap:0; }
+  .report .row { border-top:1px solid var(--line); padding:10px 0; display:flex; flex-direction:column; gap:2px; }
+  .report .row:first-child { border-top:0; }
+  .report dt { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  .report dd { margin:0; font:13px ui-monospace,"SF Mono",Menlo,monospace; word-break:break-all; }
+  .report a { color:var(--gold-hi); }
+  .limits { margin-top:14px; padding:12px; border-radius:10px; background:#0f0d09; border:1px dashed var(--line); font-size:12px; color:var(--muted); }
+  .limits ul { margin:6px 0 0; padding-left:18px; }
 </style>
 </head>
 <body>
 <main>
   <h1>Zero-Trust Evidence Verifier</h1>
-  <p class="sub">Recomputes a manifest's RFC 8785 digest, checks its secp256k1 signature, and optionally reads the on-chain
-    record — all in this browser. A record existing is never treated as proof by itself; every check below runs independently
-    and the verdict requires all of them to pass.</p>
+  <p class="sub">Independently repeats every operation it can: fetches the manifest, recomputes its RFC 8785 digest, checks its
+    secp256k1 signature, and optionally reads the on-chain record. It never trusts a supplied hash, signature, CID, job ID, or
+    "verified" flag — see Limitations below for exactly what is and isn't established.</p>
 
   <div class="panel">
     <label for="cidInput">IPFS CID or gateway URL</label>
@@ -56,8 +69,27 @@
     <button id="runBtn" type="button">Run Verification</button>
   </div>
 
+  <div id="demoBanner" class="banner">DEMO RECORD — not a real IBM execution or blockchain anchor</div>
   <div id="statusList" class="status-list"></div>
   <div id="verdict" class="verdict"></div>
+
+  <div id="report" class="report">
+    <h2 style="font-size:14px;color:var(--gold);letter-spacing:.08em;text-transform:uppercase;">Verification Report</h2>
+    <dl id="reportBody"></dl>
+    <div id="reportLinks" style="margin-top:10px;display:flex;flex-direction:column;gap:6px;"></div>
+    <button id="copyBtn" type="button" class="secondary">Copy Report as JSON</button>
+  </div>
+
+  <div class="limits">
+    <strong>What this does and does not establish:</strong>
+    <ul>
+      <li>Integrity: the retrieved bytes match the declared digest. Authenticity: the declared key produced a valid signature over that digest.</li>
+      <li>It does NOT recompute the IPFS CID's multihash from the retrieved bytes — content came from whatever gateway answered the request. See the "IPFS retrieval" line below each run.</li>
+      <li>A manifest's embedded public key proves cryptographic self-consistency, not that the key belongs to a specific person or organization — that needs a separate trust mechanism (DID/VC, certificate, registry) this page does not evaluate.</li>
+      <li>An on-chain record proves a hash/CID/proofType were anchored by a specific wallet at a specific time — it does not by itself establish the truth of any domain claim (legal, scientific, business, AI-visibility) the payload makes.</li>
+      <li>A DEMO-flagged record is never reported as VERIFIED, however cleanly its cryptography checks out.</li>
+    </ul>
+  </div>
 </main>
 <script type="module">
 import canonicalize from "https://cdn.jsdelivr.net/npm/canonicalize@5.1.0/+esm";
@@ -71,15 +103,12 @@ import { hmac } from "https://cdn.jsdelivr.net/npm/@noble/hashes@2.4.0/hmac.js/+
 secp.hashes.sha256 = sha256;
 secp.hashes.hmacSha256 = (key, ...msgs) => hmac(sha256, key, secp.etc.concatBytes(...msgs));
 
-/**
- * Status states this verifier can report. A manifest is only ever called
- * "VERIFIED" when hash, signature AND (if configured) the chain record all
- * independently pass — never because a record merely exists, and never
- * because a public key happened to be missing so the signature check was
- * skipped.
- */
-const S = {
-  OK: "ok", BAD: "bad", WARN: "warn", SKIP: "skip",
+const S = { OK: "ok", BAD: "bad", WARN: "warn", SKIP: "skip", DEMO: "demo" };
+
+const BLOCK_EXPLORERS = {
+  1: "https://etherscan.io", 11155111: "https://sepolia.etherscan.io",
+  137: "https://polygonscan.com", 8453: "https://basescan.org",
+  42161: "https://arbiscan.io", 10: "https://optimistic.etherscan.io",
 };
 
 function hexToBytes(hex) {
@@ -91,29 +120,24 @@ function hexToBytes(hex) {
 function bytesToHex(bytes) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
-
 function resolveUrl(input) {
   const v = input.trim();
   if (/^https?:\/\//i.test(v)) return v;
   return "https://dweb.link/ipfs/" + v.replace(/^ipfs:\/\//i, "");
 }
+function extractCid(input) {
+  return (input.match(/\/ipfs\/([^/?#]+)/i)?.[1] || input.replace(/^ipfs:\/\//i, "")).trim();
+}
 
 function row(status, label, detail) {
   const div = document.createElement("div");
   div.className = "status-row";
-  const dot = document.createElement("div");
-  dot.className = "dot " + status;
+  const dot = document.createElement("div"); dot.className = "dot " + status;
   const text = document.createElement("div");
-  const l = document.createElement("div");
-  l.className = "label " + status;
-  l.textContent = label;
+  const l = document.createElement("div"); l.className = "label " + status;
+  l.textContent = (status === S.OK ? "[PASS] " : status === S.BAD ? "[FAIL] " : status === S.WARN ? "[WARN] " : status === S.DEMO ? "[DEMO] " : "[SKIP] ") + label;
   text.appendChild(l);
-  if (detail) {
-    const d = document.createElement("div");
-    d.className = "detail";
-    d.textContent = detail;
-    text.appendChild(d);
-  }
+  if (detail) { const d = document.createElement("div"); d.className = "detail"; d.textContent = detail; text.appendChild(d); }
   div.append(dot, text);
   return div;
 }
@@ -122,89 +146,118 @@ async function verifyManifest() {
   const btn = document.getElementById("runBtn");
   const statusList = document.getElementById("statusList");
   const verdictEl = document.getElementById("verdict");
-  statusList.innerHTML = "";
-  statusList.style.display = "block";
-  verdictEl.style.display = "none";
+  const demoBanner = document.getElementById("demoBanner");
+  const reportEl = document.getElementById("report");
+  statusList.innerHTML = ""; statusList.style.display = "block";
+  verdictEl.style.display = "none"; demoBanner.style.display = "none"; reportEl.style.display = "none";
 
   const input = document.getElementById("cidInput").value.trim();
   const rpcUrl = document.getElementById("rpcInput").value.trim();
   const contractAddr = document.getElementById("contractInput").value.trim();
 
-  const results = []; // { status, label, detail }
+  const results = [];
   const add = (status, label, detail) => results.push({ status, label, detail });
+  const report = {}; // flat key -> value for the final Verification Report + JSON export
+  const links = [];
 
-  if (!input) {
-    add(S.BAD, "INVALID INPUT", "Enter a CID or gateway URL.");
-    render(results); return;
-  }
-  if (!window.crypto || !crypto.subtle) {
-    add(S.BAD, "ENVIRONMENT UNSUPPORTED", "Web Crypto unavailable — open this page over https://.");
-    render(results); return;
-  }
+  if (!input) { add(S.BAD, "INVALID INPUT", "Enter a CID or gateway URL."); render(results); return; }
+  if (!window.crypto || !crypto.subtle) { add(S.BAD, "ENVIRONMENT UNSUPPORTED", "Web Crypto unavailable — open this page over https://."); render(results); return; }
 
   btn.disabled = true; btn.textContent = "Verifying…";
   try {
-    // --- 1. Retrieve the manifest -------------------------------------
-    let manifest;
+    // --- 1. Retrieve the manifest ------------------------------------------------
+    let manifest, httpStatus = null;
     try {
-      const res = await fetch(resolveUrl(input));
+      const url = resolveUrl(input);
+      const res = await fetch(url);
+      httpStatus = res.status;
       if (!res.ok) throw new Error("HTTP " + res.status);
       manifest = await res.json();
+      add(S.OK, "Manifest retrieved", `url: ${url}\nHTTP status: ${httpStatus}`);
+      add(S.WARN, "CONTENT RETRIEVED FROM GATEWAY — CID NOT LOCALLY RECOMPUTED",
+          "This page trusts the gateway to serve the bytes for the requested path; it does not recompute the IPFS multihash from those bytes to independently confirm they match the CID.");
+      links.push(["IPFS manifest", url]);
+      report.manifest_cid = extractCid(input);
     } catch (err) {
       add(S.BAD, "IPFS RETRIEVAL FAILED", String(err && err.message || err));
       render(results); return;
     }
 
-    // --- 2. Structural check -------------------------------------------
+    // --- 2. Schema / structural check ---------------------------------------------
     const hasShape = manifest && typeof manifest === "object"
       && "payload" in manifest && manifest.digest && manifest.digest.value
       && manifest.signature && manifest.signature.value;
     if (!hasShape) {
-      add(S.BAD, "INVALID MANIFEST", "Missing payload/digest/signature — not a recognized proof manifest.");
+      add(S.BAD, "MALFORMED MANIFEST", "Missing payload/digest/signature — not a recognized proof manifest.");
       render(results); return;
     }
-    add(S.OK, "MANIFEST STRUCTURE OK", "proof_type: " + (manifest.proof_type || "(none)"));
+    add(S.OK, "Schema valid", `proof_type: ${manifest.proof_type || "(none)"}\nproof_id: ${manifest.proof_id || "(none)"}\nmanifest_version: ${manifest.manifest_version || "(none)"}`);
 
-    // --- 3. Recompute the RFC 8785 digest --------------------------------
+    const isDemo = manifest.mode === "DEMO" || manifest.verification_status === "DEMO_ONLY";
+    if (isDemo) {
+      demoBanner.style.display = "block";
+      add(S.DEMO, "DEMO RECORD", "This manifest is explicitly flagged as a demo. It will never be reported as VERIFIED, regardless of how its checks below come out.");
+    }
+
+    report.proof_id = manifest.proof_id || null;
+    report.proof_type = manifest.proof_type || null;
+    report.payload_digest = String(manifest.digest.value).toLowerCase();
+    report.signature_algorithm = manifest.signature.algorithm || null;
+    report.signing_curve = manifest.signature.curve || null;
+    report.signer_public_key = manifest.signature.public_key || null;
+
+    // --- 3. RFC 8785 canonicalize + SHA-256 ----------------------------------------
     const canonicalStr = canonicalize(manifest.payload);
     const computedDigest = bytesToHex(sha256(new TextEncoder().encode(canonicalStr)));
+    add(S.OK, "RFC 8785 canonicalization", `canonicalization: ${JSON.stringify(manifest.canonicalization || "RFC 8785 (JCS)")}`);
+
     const statedDigest = String(manifest.digest.value).toLowerCase();
     const hashMatches = computedDigest === statedDigest;
-    add(hashMatches ? S.OK : S.BAD,
-        hashMatches ? "DIGEST MATCH" : "DIGEST MISMATCH",
+    add(hashMatches ? S.OK : S.BAD, hashMatches ? "SHA-256 digest match" : "DIGEST MISMATCH",
         "computed: " + computedDigest + "\nstated:   " + statedDigest);
 
-    // --- 4. Signature check — never optional -----------------------------
+    // --- 4. Signature check — fail-closed, never optional --------------------------
     const sig = manifest.signature || {};
-    const pubKeyHex = sig.public_key;
+    const signaturePresent = Boolean(sig.value);
+    const publicKeyPresent = Boolean(sig.public_key);
     let signatureValid = false;
-    if (!pubKeyHex) {
-      add(S.WARN, "SIGNATURE UNVERIFIED — KEY MISSING",
-          "The manifest carries no public_key, so the signature cannot be checked. This is NOT a pass.");
-    } else if (sig.algorithm !== "ECDSA" || sig.curve !== "secp256k1" || sig.encoding !== "compact-r-s-hex") {
-      add(S.BAD, "UNSUPPORTED SIGNATURE SCHEME", JSON.stringify({ algorithm: sig.algorithm, curve: sig.curve, encoding: sig.encoding }));
-    } else {
-      try {
-        const sigBytes = hexToBytes(sig.value);
-        const pubBytes = hexToBytes(pubKeyHex);
-        const digestBytes = hexToBytes(statedDigest);
-        signatureValid = secp.verify(sigBytes, digestBytes, pubBytes, { prehash: false });
-        add(signatureValid ? S.OK : S.BAD,
-            signatureValid ? "SIGNATURE VALID" : "SIGNATURE INVALID",
-            "public_key: " + pubKeyHex);
-      } catch (err) {
-        add(S.BAD, "SIGNATURE INVALID", "Could not parse/verify: " + (err && err.message || err));
+    add(signaturePresent ? S.OK : S.BAD, signaturePresent ? "Signature present" : "SIGNATURE MISSING");
+    add(publicKeyPresent ? S.OK : S.WARN, publicKeyPresent ? "Issuer key present" : "SIGNATURE UNVERIFIED — KEY MISSING",
+        publicKeyPresent ? undefined : "The manifest carries no public_key, so the signature cannot be checked. This is NOT a pass.");
+
+    if (signaturePresent && publicKeyPresent) {
+      if (sig.algorithm !== "ECDSA" || sig.curve !== "secp256k1" || sig.encoding !== "compact-r-s-hex") {
+        add(S.BAD, "UNSUPPORTED SIGNATURE SCHEME", JSON.stringify({ algorithm: sig.algorithm, curve: sig.curve, encoding: sig.encoding }));
+      } else {
+        try {
+          signatureValid = secp.verify(hexToBytes(sig.value), hexToBytes(statedDigest), hexToBytes(sig.public_key), { prehash: false });
+          add(signatureValid ? S.OK : S.BAD, signatureValid ? "ECDSA signature valid" : "SIGNATURE INVALID", "public_key: " + sig.public_key);
+        } catch (err) {
+          add(S.BAD, "SIGNATURE INVALID", "Could not parse/verify: " + (err && err.message || err));
+        }
       }
     }
-    const publicKeyPresent = Boolean(pubKeyHex);
+    report.signature_status = !signaturePresent ? "MISSING" : !publicKeyPresent ? "UNVERIFIED_KEY_MISSING" : (signatureValid ? "VALID" : "INVALID");
 
-    // --- 5. Optional on-chain check ---------------------------------------
-    // chainState: "skipped" (genuinely not configured — doesn't block the
-    // verdict) | "ok" (record active, CID + proofType both match) |
-    // "failed" (configured but something didn't check out — DOES block the
-    // verdict; a network error here must never be silently treated the same
-    // as "not configured").
+    // Required cryptographic verification per spec: ALL of these, not any subset.
+    const cryptoVerified = hashMatches && signaturePresent && publicKeyPresent && signatureValid;
+
+    // --- 5. Provenance (what was supplied, not an unearned broader claim) ----------
+    const execInfo = manifest.payload && manifest.payload.execution;
+    if (execInfo && execInfo.provider) {
+      add(S.OK, "Provider execution record supplied", `provider: ${execInfo.provider}\nbackend: ${execInfo.backend_name || "(none)"}\njob_id: ${execInfo.job_id || "(none)"}\nstatus: ${execInfo.execution_status || "(none)"}`);
+      report.provider = execInfo.provider; report.backend = execInfo.backend_name || null; report.job_id = execInfo.job_id || null;
+      add(S.WARN, "PROVENANCE UNCONFIRMED", "The job ID/backend above are only what the manifest declares. This page cannot independently query IBM's systems to confirm the job actually ran — that would require the manifest author's own IBM account access.");
+    } else {
+      report.provider = null; report.backend = null; report.job_id = null;
+    }
+
+    // --- 6. Optional on-chain check -------------------------------------------------
     let chainState = "skipped";
+    report.blockchain_network = null; report.chain_id = null; report.contract_address = null;
+    report.tx_hash = manifest.blockchain?.tx_hash || null; report.block_number = manifest.blockchain?.block_number ?? null;
+    report.lifecycle_status = manifest.lifecycle?.status || (hasShape ? "UNKNOWN" : null);
+
     if (!rpcUrl || !contractAddr) {
       add(S.SKIP, "CHAIN CHECK SKIPPED — NOT CONFIGURED", "Provide an RPC URL and contract address to check an on-chain anchor.");
     } else {
@@ -212,44 +265,46 @@ async function verifyManifest() {
         const { ethers } = await import("https://cdn.jsdelivr.net/npm/ethers@6.17.0/+esm");
         const provider = new ethers.JsonRpcProvider(rpcUrl);
         const abi = [
-          "function verifyProof(bytes32) view returns (bool isValid, string ipfsCID, string proofType, uint256 timestamp, address issuer, uint8 status)",
+          "function verifyProof(bytes32) view returns (bool isValid, string ipfsCID, string proofType, uint256 timestamp, uint256 expiresAt, address issuer, uint8 status)",
         ];
         const contract = new ethers.Contract(contractAddr, abi, provider);
         const network = await provider.getNetwork();
-        const [, onChainCid, onChainProofType, ts, issuer, status] =
-          await contract.verifyProof("0x" + statedDigest);
+        const [, onChainCid, onChainProofType, ts, expiresAt, issuer, status] = await contract.verifyProof("0x" + statedDigest);
 
-        const STATUS_NAMES = ["NonExistent", "Active", "Revoked"];
+        const STATUS_NAMES = ["NonExistent", "Active", "Revoked", "Expired"];
         const statusName = STATUS_NAMES[Number(status)] || String(status);
-        const chainInfo = `chainId: ${network.chainId}\ncontract: ${contractAddr}\nissuer: ${issuer}\n` +
-          `status: ${statusName}\ntimestamp: ${new Date(Number(ts) * 1000).toISOString()}\n` +
-          `on-chain CID: ${onChainCid}\non-chain proofType: ${onChainProofType}`;
+        const chainId = Number(network.chainId);
+        const explorer = BLOCK_EXPLORERS[chainId];
+
+        report.blockchain_network = network.name !== "unknown" ? network.name : null;
+        report.chain_id = chainId; report.contract_address = contractAddr;
+        report.lifecycle_status = statusName.toUpperCase();
+
+        add(statusName !== "NonExistent" ? S.OK : S.BAD, statusName !== "NonExistent" ? "Blockchain record found" : "CHAIN RECORD NOT FOUND",
+            `chainId: ${chainId}\ncontract: ${contractAddr}\nlooked up hash: 0x${statedDigest}`);
 
         if (statusName === "NonExistent") {
-          add(S.BAD, "CHAIN RECORD NOT FOUND", `chainId ${network.chainId}, contract ${contractAddr}\nlooked up hash: 0x${statedDigest}`);
-          chainState = "failed";
-        } else if (statusName === "Revoked") {
-          add(S.BAD, "PROOF REVOKED", chainInfo);
           chainState = "failed";
         } else {
-          // Extract the bare CID the user actually asked to verify (strip a
-          // gateway URL down to its /ipfs/<cid> path, or an ipfs:// prefix)
-          // so "the CID I looked up" and "the CID anchored on-chain" are
-          // compared as CIDs, not as whatever URL shape happened to be typed.
-          const requestedCid = (input.match(/\/ipfs\/([^/?#]+)/i)?.[1] || input.replace(/^ipfs:\/\//i, "")).trim();
-          const cidMatches = Boolean(onChainCid) && onChainCid === requestedCid;
-          const proofTypeMatches = !manifest.proof_type || onChainProofType === manifest.proof_type;
+          add(S.OK, "Blockchain hash matches", "on-chain evidenceHash equals the manifest's own digest (looked up by that digest, so this is definitionally true; included for the report).");
 
-          if (!cidMatches) {
-            add(S.BAD, "CHAIN CID MISMATCH", chainInfo + `\nrequested CID: ${requestedCid}\n(hash matches on-chain, but it was anchored under a different CID)`);
-            chainState = "failed";
-          } else if (!proofTypeMatches) {
-            add(S.BAD, "CHAIN PROOF TYPE MISMATCH", chainInfo + `\nmanifest proof_type: ${manifest.proof_type}`);
-            chainState = "failed";
-          } else {
-            add(S.OK, "CHAIN RECORD ACTIVE", chainInfo);
-            chainState = "ok";
-          }
+          const requestedCid = extractCid(input);
+          const cidMatches = Boolean(onChainCid) && onChainCid === requestedCid;
+          add(cidMatches ? S.OK : S.BAD, cidMatches ? "CID matches" : "CHAIN CID MISMATCH",
+              `on-chain CID: ${onChainCid}\nrequested CID: ${requestedCid}`);
+
+          const proofTypeMatches = !manifest.proof_type || onChainProofType === manifest.proof_type;
+          add(proofTypeMatches ? S.OK : S.BAD, proofTypeMatches ? "Proof type matches" : "CHAIN PROOF TYPE MISMATCH",
+              `on-chain proofType: ${onChainProofType}\nmanifest proof_type: ${manifest.proof_type}`);
+
+          const lifecycleOk = statusName === "Active";
+          add(lifecycleOk ? S.OK : S.BAD, lifecycleOk ? "Lifecycle Active" : (statusName === "Revoked" ? "PROOF REVOKED" : "PROOF EXPIRED"),
+              `issuer: ${issuer}\nstatus: ${statusName}\nanchored: ${new Date(Number(ts) * 1000).toISOString()}` +
+              (Number(expiresAt) ? `\nexpires: ${new Date(Number(expiresAt) * 1000).toISOString()}` : "\nexpires: never"));
+
+          chainState = (cidMatches && proofTypeMatches && lifecycleOk) ? "ok" : "failed";
+          report.issuer = issuer; report.anchor_timestamp = new Date(Number(ts) * 1000).toISOString();
+          if (explorer && manifest.blockchain?.tx_hash) links.push(["Block explorer transaction", `${explorer}/tx/${manifest.blockchain.tx_hash}`]);
         }
       } catch (err) {
         add(S.BAD, "CHAIN CHECK FAILED", String(err && err.message || err));
@@ -257,36 +312,88 @@ async function verifyManifest() {
       }
     }
 
-    // --- Verdict: every applicable check must independently pass ----------
-    const cryptoVerified = hashMatches && signatureValid && publicKeyPresent;
-    const overallOk = cryptoVerified && chainState !== "failed";
-
-    if (overallOk) {
-      add(S.OK, "PROVENANCE CONFIRMED" + (chainState === "skipped" ? " (IPFS + signature only — no chain check configured)" : " (IPFS + signature + chain)"));
+    // --- Final verdict: fail-closed, every applicable condition required -----------
+    let finalStatus, overallOk;
+    if (isDemo) {
+      finalStatus = "DEMO ONLY"; overallOk = null; // neither green nor red — its own category
+    } else if (!cryptoVerified) {
+      finalStatus = "NOT VERIFIED"; overallOk = false;
+    } else if (chainState === "failed") {
+      finalStatus = "PARTIALLY VERIFIED"; overallOk = false; // crypto held up; the chain claim did not
+    } else if (chainState === "skipped") {
+      finalStatus = "INTEGRITY + SIGNATURE VERIFIED (no chain check configured)"; overallOk = true;
     } else {
-      add(S.BAD, "PROVENANCE UNCONFIRMED", "One or more required checks above did not pass.");
+      finalStatus = "CRYPTOGRAPHICALLY VERIFIED + CHAIN ANCHOR VERIFIED"; overallOk = true;
     }
+    add(overallOk === true ? S.OK : overallOk === false ? S.BAD : S.DEMO, finalStatus);
+    report.final_result = finalStatus;
+    report.verification_methodology_version = manifest.verification?.methodology_version || null;
+    report.protocol_version = manifest.verification?.protocol_version || manifest.manifest_version || null;
 
-    render(results, overallOk);
+    const verifyUrl = location.href.split("?")[0] + "?cid=" + encodeURIComponent(input);
+    links.push(["This verification", verifyUrl]);
+
+    render(results, isDemo ? "demo" : overallOk, report, links);
   } finally {
     btn.disabled = false; btn.textContent = "Run Verification";
   }
 }
 
-function render(results, overallOk) {
+function render(results, overallOk, report, links) {
   const statusList = document.getElementById("statusList");
   const verdictEl = document.getElementById("verdict");
   statusList.innerHTML = "";
   for (const r of results) statusList.appendChild(row(r.status, r.label, r.detail));
 
-  if (typeof overallOk === "boolean") {
+  if (overallOk !== undefined) {
     verdictEl.style.display = "block";
-    verdictEl.className = "verdict " + (overallOk ? "ok" : "bad");
-    verdictEl.textContent = overallOk ? "✓ VERIFIED" : "✗ NOT VERIFIED";
+    verdictEl.className = "verdict " + (overallOk === "demo" ? "demo" : overallOk ? "ok" : "bad");
+    verdictEl.textContent = overallOk === "demo" ? "◆ DEMO ONLY" : overallOk ? "✓ VERIFIED" : "✗ NOT VERIFIED";
+  }
+
+  if (report) {
+    const reportEl = document.getElementById("report");
+    const body = document.getElementById("reportBody");
+    const linksEl = document.getElementById("reportLinks");
+    body.innerHTML = ""; linksEl.innerHTML = "";
+    const LABELS = {
+      proof_id: "Proof ID", proof_type: "Proof Type", manifest_cid: "Manifest CID", payload_digest: "Payload Digest",
+      signature_algorithm: "Signature Algorithm", signing_curve: "Signing Curve", signer_public_key: "Signer Public Key",
+      signature_status: "Signature Status", provider: "Provider", backend: "Backend", job_id: "Job ID",
+      blockchain_network: "Blockchain Network", chain_id: "Chain ID", contract_address: "Contract", tx_hash: "Transaction",
+      block_number: "Block", anchor_timestamp: "Anchor Timestamp", lifecycle_status: "Lifecycle Status",
+      verification_methodology_version: "Methodology Version", protocol_version: "Protocol Version", final_result: "Final Result",
+    };
+    for (const [key, label] of Object.entries(LABELS)) {
+      const value = report[key];
+      const div = document.createElement("div"); div.className = "row";
+      const dt = document.createElement("dt"); dt.textContent = label;
+      const dd = document.createElement("dd"); dd.textContent = value === null || value === undefined ? "(not available)" : String(value);
+      div.append(dt, dd); body.appendChild(div);
+    }
+    for (const [label, href] of links || []) {
+      const a = document.createElement("a"); a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = label;
+      linksEl.appendChild(a);
+    }
+    reportEl.style.display = "block";
+    reportEl.dataset.json = JSON.stringify(report, null, 2);
   }
 }
 
 document.getElementById("runBtn").addEventListener("click", verifyManifest);
+document.getElementById("copyBtn").addEventListener("click", async () => {
+  const text = document.getElementById("report").dataset.json || "{}";
+  try { await navigator.clipboard.writeText(text); } catch (_) { /* clipboard may be unavailable; no-op */ }
+});
+
+// Allow /?cid=... to prefill and auto-run, matching the /verify?cid=<CID> route this page stands in for.
+const params = new URLSearchParams(location.search);
+if (params.get("cid")) {
+  document.getElementById("cidInput").value = params.get("cid");
+  if (params.get("rpc")) document.getElementById("rpcInput").value = params.get("rpc");
+  if (params.get("contract")) document.getElementById("contractInput").value = params.get("contract");
+  verifyManifest();
+}
 </script>
 </body>
 </html>

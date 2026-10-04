@@ -29,8 +29,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import jcs
 from ecdsa import SECP256k1, SigningKey
@@ -42,6 +43,35 @@ from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler
 SIGNATURE_ALGORITHM = "ECDSA"
 SIGNATURE_CURVE = "secp256k1"
 SIGNATURE_ENCODING = "compact-r-s-hex"  # 64 bytes: 32-byte r || 32-byte s, big-endian, low-S
+
+PROTOCOL_VERSION = "4.0.0"
+METHODOLOGY_VERSION = "1.0"
+CANONICALIZATION = {"name": "RFC8785-JCS", "version": "1.0"}
+
+# proof_type -> (schema_version, required top-level keys within `payload`).
+# This is deliberately shallow (presence checks, not full JSON Schema) — it
+# exists to fail closed on an obviously incomplete domain payload, not to be
+# a complete validator for every field shape.
+PROOF_SCHEMAS: Dict[str, Dict[str, Any]] = {
+    "QUANTUM_GHZ_EXECUTION": {
+        "schema_version": "quantum-ghz@1",
+        "required": ["execution", "circuit", "shots", "raw_counts", "ghz_computational_basis_population_fidelity"],
+    },
+    "AI_VISIBILITY_AUDIT": {
+        "schema_version": "ai-visibility-audit@1",
+        "required": ["audit"],
+        "required_audit": ["query", "provider", "model", "timestamp", "response_hash"],
+    },
+    "CREDENTIAL_VERIFICATION": {
+        "schema_version": "credential-verification@1",
+        "required": ["credential"],
+        "required_credential": ["issuer", "subject", "type"],
+    },
+    "BUSINESS_EVIDENCE": {
+        "schema_version": "business-evidence@1",
+        "required": ["evidence_type", "description"],
+    },
+}
 
 
 class ProofEngineError(RuntimeError):
@@ -156,30 +186,120 @@ class ProofEngine:
             "public_key": public_key_hex,
         }
 
-    def build_proof_manifest(self, proof_type: str, raw_payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Build a complete, signed proof manifest.
+    @staticmethod
+    def validate_payload(proof_type: str, payload: Dict[str, Any]) -> str:
+        """Fail closed on an obviously incomplete domain payload.
 
-        Fails closed: raises if signing isn't possible rather than emitting
-        an unsigned manifest that looks complete. If you deliberately want
-        an unsigned manifest (e.g. for local testing), call
-        canonicalize_and_hash yourself and assemble it explicitly.
+        Returns the proof type's schema_version on success, or raises
+        ProofEngineError naming exactly what's missing. This is a presence
+        check, not a full JSON Schema validator — it exists so a payload
+        missing its domain evidence can never reach a signed manifest.
         """
+        schema = PROOF_SCHEMAS.get(proof_type)
+        if schema is None:
+            raise ProofEngineError(
+                f"Unknown proof_type {proof_type!r}. Known types: {sorted(PROOF_SCHEMAS)}"
+            )
+        missing = [k for k in schema["required"] if k not in payload]
+        if missing:
+            raise ProofEngineError(f"{proof_type} payload is missing required field(s): {missing}")
+        if "required_audit" in schema:
+            missing_audit = [k for k in schema["required_audit"] if k not in payload.get("audit", {})]
+            if missing_audit:
+                raise ProofEngineError(f"{proof_type} payload.audit is missing: {missing_audit}")
+        if "required_credential" in schema:
+            missing_cred = [k for k in schema["required_credential"] if k not in payload.get("credential", {})]
+            if missing_cred:
+                raise ProofEngineError(f"{proof_type} payload.credential is missing: {missing_cred}")
+        return schema["schema_version"]
+
+    def build_proof_manifest(
+        self,
+        proof_type: str,
+        raw_payload: Dict[str, Any],
+        signer: Optional[Dict[str, str]] = None,
+        demo: bool = False,
+    ) -> Dict[str, Any]:
+        """Build a complete, signed proof manifest matching the v4 schema:
+
+        manifest_version, proof_id, proof_type, schema_version, payload,
+        canonicalization{name,version}, digest{}, signature{...,public_key},
+        signer{type,id}, ipfs{cid,gateway_urls} (null until pinned),
+        blockchain{...} (null until anchored), lifecycle{status,...},
+        created_at, verification{protocol_version, methodology_version}.
+
+        Fails closed: raises if the domain payload is incomplete, or if
+        signing isn't possible, rather than emitting a manifest that looks
+        complete but isn't. `demo=True` additionally stamps the manifest
+        `mode: "DEMO"` / `verification_status: "DEMO_ONLY"` so no verifier
+        can mistake it for a production proof, however cleanly it verifies.
+        """
+        schema_version = self.validate_payload(proof_type, raw_payload)
         canonical_bytes, digest_hex = self.canonicalize_and_hash(raw_payload)
         signature = self.sign_digest(digest_hex)
 
-        return {
-            "manifest_version": "4.0.0",
+        manifest = {
+            "manifest_version": PROTOCOL_VERSION,
+            "proof_id": str(uuid.uuid4()),
             "proof_type": proof_type,
+            "schema_version": schema_version,
             "payload": raw_payload,
-            "canonicalization": "RFC 8785 (JSON Canonicalization Scheme)",
-            "digest": {
-                "algorithm": "SHA-256",
-                "encoding": "hex",
-                "value": digest_hex,
-            },
+            "canonicalization": dict(CANONICALIZATION),
+            "digest": {"algorithm": "SHA-256", "encoding": "hex", "value": digest_hex},
             "signature": signature,
-            "audit_trail": {
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "canonical_byte_length": len(canonical_bytes),
+            "signer": signer or {"type": "secp256k1-key", "id": signature["public_key"]},
+            "ipfs": {"cid": None, "gateway_urls": []},
+            # Populated for real only after an actual on-chain anchorProof
+            # call succeeds — never guessed, never left as a plausible-looking
+            # placeholder.
+            "blockchain": {
+                "network": None,
+                "chain_id": None,
+                "contract_address": None,
+                "tx_hash": None,
+                "block_number": None,
+                "anchored_hash": None,
             },
+            "lifecycle": {"status": "ACTIVE", "revoked_at": None, "expires_at": None},
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "verification": {"protocol_version": PROTOCOL_VERSION, "methodology_version": METHODOLOGY_VERSION},
         }
+        if demo:
+            manifest["mode"] = "DEMO"
+            manifest["verification_status"] = "DEMO_ONLY"
+        return manifest
+
+    def build_demo_manifest(self, proof_type: str, raw_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """A manifest that is cryptographically real (genuinely hashed and
+        signed, verifiable with real cryptography) but is stamped DEMO so it
+        can never be displayed or mistaken as a production proof — see
+        demo/ for a generated pair (valid + tampered)."""
+        return self.build_proof_manifest(proof_type, raw_payload, demo=True)
+
+    def record_anchor(
+        self,
+        manifest: Dict[str, Any],
+        *,
+        network: str,
+        chain_id: int,
+        contract_address: str,
+        tx_hash: str,
+        block_number: int,
+        ipfs_cid: str,
+        gateway_urls: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Fill in `ipfs`/`blockchain` on a manifest AFTER a real anchor
+        transaction has actually been mined. Never call this with guessed or
+        placeholder values — there is deliberately no default for any
+        argument here."""
+        out = dict(manifest)
+        out["ipfs"] = {"cid": ipfs_cid, "gateway_urls": gateway_urls or [f"https://dweb.link/ipfs/{ipfs_cid}"]}
+        out["blockchain"] = {
+            "network": network,
+            "chain_id": chain_id,
+            "contract_address": contract_address,
+            "tx_hash": tx_hash,
+            "block_number": block_number,
+            "anchored_hash": manifest["digest"]["value"],
+        }
+        return out

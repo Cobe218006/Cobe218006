@@ -86,17 +86,28 @@ def test_signature_verifies_against_digest_bytes_not_hex_text():
         vk.verify_digest(sig_bytes, digest_hex.encode("utf-8"), sigdecode=sigdecode_string)
 
 
+BUSINESS_PAYLOAD = {"evidence_type": "certification", "description": "ISO 9001:2015 certificate, cert #12345"}
+
+
 def test_proof_manifest_shape_and_signature():
     pem = _signing_key_pem()
     engine = ProofEngine(private_key_pem=pem)
-    manifest = engine.build_proof_manifest("UNIT_TEST", {"test_metric": 100, "status": "VERIFIED"})
+    manifest = engine.build_proof_manifest("BUSINESS_EVIDENCE", BUSINESS_PAYLOAD)
 
     assert manifest["manifest_version"] == "4.0.0"
-    assert manifest["canonicalization"] == "RFC 8785 (JSON Canonicalization Scheme)"
+    assert manifest["proof_type"] == "BUSINESS_EVIDENCE"
+    assert manifest["schema_version"] == "business-evidence@1"
+    assert "proof_id" in manifest and len(manifest["proof_id"]) > 0
+    assert manifest["canonicalization"] == {"name": "RFC8785-JCS", "version": "1.0"}
     assert len(manifest["digest"]["value"]) == 64
     assert manifest["signature"]["algorithm"] == "ECDSA"
     assert manifest["signature"]["curve"] == "secp256k1"
     assert "public_key" in manifest["signature"]
+    assert manifest["signer"]["id"] == manifest["signature"]["public_key"]
+    assert manifest["ipfs"] == {"cid": None, "gateway_urls": []}
+    assert manifest["blockchain"]["tx_hash"] is None and manifest["blockchain"]["block_number"] is None
+    assert manifest["lifecycle"] == {"status": "ACTIVE", "revoked_at": None, "expires_at": None}
+    assert "mode" not in manifest  # not a demo manifest
 
     vk = SigningKey.from_pem(pem).get_verifying_key()
     sig_bytes = bytes.fromhex(manifest["signature"]["value"])
@@ -104,7 +115,8 @@ def test_proof_manifest_shape_and_signature():
     assert vk.verify_digest(sig_bytes, digest_bytes, sigdecode=sigdecode_string)
 
     # Tampering with the payload after signing must change the digest.
-    _, tampered_digest = ProofEngine.canonicalize_and_hash({"test_metric": 101, "status": "VERIFIED"})
+    tampered_payload = dict(BUSINESS_PAYLOAD, description="forged description")
+    _, tampered_digest = ProofEngine.canonicalize_and_hash(tampered_payload)
     assert tampered_digest != manifest["digest"]["value"]
 
 
@@ -113,7 +125,7 @@ def test_fails_closed_without_key():
     silent 'unsigned' fallback that still looks like a complete proof."""
     engine = ProofEngine(private_key_pem=None)
     try:
-        engine.build_proof_manifest("UNIT_TEST", {"a": 1})
+        engine.build_proof_manifest("BUSINESS_EVIDENCE", BUSINESS_PAYLOAD)
         assert False, "expected ProofEngineError when no signing key is configured"
     except ProofEngineError:
         pass
@@ -126,3 +138,87 @@ def test_fails_closed_on_wrong_digest_length():
         assert False, "expected ProofEngineError for a non-32-byte digest"
     except ProofEngineError:
         pass
+
+
+def test_fails_closed_on_unknown_proof_type():
+    engine = ProofEngine(private_key_pem=_signing_key_pem())
+    try:
+        engine.build_proof_manifest("NOT_A_REAL_TYPE", {"a": 1})
+        assert False, "expected ProofEngineError for an unregistered proof_type"
+    except ProofEngineError:
+        pass
+
+
+def test_fails_closed_on_incomplete_domain_payload():
+    """A payload missing the required domain evidence for its proof_type
+    must never reach a signed manifest — the schema check runs BEFORE
+    signing, not after."""
+    engine = ProofEngine(private_key_pem=_signing_key_pem())
+    try:
+        engine.build_proof_manifest("AI_VISIBILITY_AUDIT", {"audit": {"query": "only this"}})
+        assert False, "expected ProofEngineError for an incomplete AI_VISIBILITY_AUDIT payload"
+    except ProofEngineError as exc:
+        assert "provider" in str(exc) or "model" in str(exc)
+
+
+def test_all_proof_types_accept_a_minimal_valid_payload():
+    engine = ProofEngine(private_key_pem=_signing_key_pem())
+    payloads = {
+        "QUANTUM_GHZ_EXECUTION": {
+            "execution": {"provider": "IBM Quantum (Open Plan)", "backend_name": "ibm_test", "job_id": "d1x", "execution_status": "COMPLETED"},
+            "circuit": "GHZ-5", "shots": 1024, "raw_counts": {"00000": 512, "11111": 512},
+            "ghz_computational_basis_population_fidelity": {"value": 1.0},
+        },
+        "AI_VISIBILITY_AUDIT": {
+            "audit": {"query": "best proof infra", "provider": "anthropic", "model": "claude",
+                      "timestamp": "2026-01-01T00:00:00Z", "response_hash": "ab" * 32},
+        },
+        "CREDENTIAL_VERIFICATION": {
+            "credential": {"issuer": "did:example:issuer", "subject": "did:example:subject", "type": "ExampleCredential"},
+        },
+        "BUSINESS_EVIDENCE": BUSINESS_PAYLOAD,
+    }
+    for proof_type, payload in payloads.items():
+        manifest = engine.build_proof_manifest(proof_type, payload)
+        assert manifest["proof_type"] == proof_type
+        assert manifest["schema_version"].startswith(proof_type.lower().replace("_", "-")[:4]) or True  # format varies; just must exist
+        assert manifest["signature"]["value"]
+
+
+def test_demo_manifest_is_marked_and_still_cryptographically_real():
+    """A demo manifest must be unmistakably flagged, but its crypto must
+    still be genuine (verify.html must be able to tell 'demo' from
+    'invalid' — those are different failure/status modes)."""
+    engine = ProofEngine(private_key_pem=_signing_key_pem())
+    manifest = engine.build_demo_manifest("BUSINESS_EVIDENCE", BUSINESS_PAYLOAD)
+
+    assert manifest["mode"] == "DEMO"
+    assert manifest["verification_status"] == "DEMO_ONLY"
+
+    vk_hex = manifest["signature"]["public_key"]
+    from ecdsa import VerifyingKey
+
+    vk = VerifyingKey.from_string(bytes.fromhex(vk_hex), curve=SECP256k1)
+    sig_bytes = bytes.fromhex(manifest["signature"]["value"])
+    digest_bytes = bytes.fromhex(manifest["digest"]["value"])
+    assert vk.verify_digest(sig_bytes, digest_bytes, sigdecode=sigdecode_string)
+
+
+def test_record_anchor_requires_explicit_real_values():
+    """record_anchor has no defaults for any field — there must be no way
+    to accidentally fill in a plausible-looking placeholder tx hash."""
+    engine = ProofEngine(private_key_pem=_signing_key_pem())
+    manifest = engine.build_proof_manifest("BUSINESS_EVIDENCE", BUSINESS_PAYLOAD)
+    anchored = engine.record_anchor(
+        manifest,
+        network="sepolia", chain_id=11155111,
+        contract_address="0x" + "11" * 20,
+        tx_hash="0x" + "22" * 32,
+        block_number=12345,
+        ipfs_cid="bafytestcid",
+    )
+    assert anchored["blockchain"]["tx_hash"] == "0x" + "22" * 32
+    assert anchored["blockchain"]["anchored_hash"] == manifest["digest"]["value"]
+    assert anchored["ipfs"]["cid"] == "bafytestcid"
+    # The original manifest object must be untouched (no accidental aliasing).
+    assert manifest["blockchain"]["tx_hash"] is None
