@@ -28,11 +28,18 @@ contract GenesisRegistryV2 {
     mapping(bytes32 => ProofRecord) public registry;
     mapping(address => bytes32[]) public issuerRecords;
 
+    // NOTE: `ipfsCID` and `proofType` are NOT marked `indexed` deliberately.
+    // Solidity stores an indexed `string`/`bytes` as keccak256(value) in the
+    // topic, not the string itself — a UI that read the raw event topic
+    // expecting the CID text back would be reading a hash, not a CID. Both
+    // fields are emitted as plain (non-indexed) event data instead, so log
+    // consumers get the actual string, and the full record (CID included)
+    // always remains readable from the `registry` mapping regardless.
     event ProofAnchored(
         bytes32 indexed evidenceHash,
+        address indexed issuer,
         string ipfsCID,
         string proofType,
-        address indexed issuer,
         uint256 timestamp
     );
     event ProofRevoked(bytes32 indexed evidenceHash, address indexed issuer, uint256 timestamp);
@@ -41,13 +48,7 @@ contract GenesisRegistryV2 {
     error RecordNotFound(bytes32 evidenceHash);
     error UnauthorizedIssuer(address caller, address actualIssuer);
     error InvalidHash();
-
-    modifier onlyIssuer(bytes32 _evidenceHash) {
-        if (registry[_evidenceHash].issuer != msg.sender) {
-            revert UnauthorizedIssuer(msg.sender, registry[_evidenceHash].issuer);
-        }
-        _;
-    }
+    error NotActive(Status currentStatus);
 
     /// @notice Anchor a new proof. Anyone may call this for their own hash;
     ///         a given evidenceHash can only ever be anchored once.
@@ -72,13 +73,23 @@ contract GenesisRegistryV2 {
 
         issuerRecords[msg.sender].push(_evidenceHash);
 
-        emit ProofAnchored(_evidenceHash, _ipfsCID, _proofType, msg.sender, block.timestamp);
+        emit ProofAnchored(_evidenceHash, msg.sender, _ipfsCID, _proofType, block.timestamp);
     }
 
     /// @notice Revoke a proof you anchored. It stays on-chain with status Revoked.
-    function revokeProof(bytes32 _evidenceHash) external onlyIssuer(_evidenceHash) {
-        if (registry[_evidenceHash].status == Status.NonExistent) revert RecordNotFound(_evidenceHash);
-        registry[_evidenceHash].status = Status.Revoked;
+    /// @dev Checked in order: record exists -> caller is its issuer -> record
+    ///      is currently Active. A nonexistent record's `issuer` reads as the
+    ///      zero address, so checking existence before ownership means a bad
+    ///      hash is reported as RecordNotFound rather than the misleading
+    ///      UnauthorizedIssuer(caller, address(0)). Revoking twice reverts
+    ///      with NotActive instead of silently succeeding.
+    function revokeProof(bytes32 _evidenceHash) external {
+        ProofRecord storage record = registry[_evidenceHash];
+        if (record.status == Status.NonExistent) revert RecordNotFound(_evidenceHash);
+        if (record.issuer != msg.sender) revert UnauthorizedIssuer(msg.sender, record.issuer);
+        if (record.status != Status.Active) revert NotActive(record.status);
+
+        record.status = Status.Revoked;
         emit ProofRevoked(_evidenceHash, msg.sender, block.timestamp);
     }
 

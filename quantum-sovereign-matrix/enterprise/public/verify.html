@@ -6,107 +6,283 @@
 <meta name="color-scheme" content="dark">
 <title>Proof Verification Portal</title>
 <style>
-  :root { --bg:#0b0a08; --panel:#15130e; --line:#3a3220; --gold:#d4af37; --gold-hi:#f1d27a; --text:#f3e9c6; --muted:#a99d7a; --ok:#7fd18b; --bad:#ff8a7a; }
+  :root { --bg:#0b0a08; --panel:#15130e; --line:#3a3220; --gold:#d4af37; --gold-hi:#f1d27a; --text:#f3e9c6; --muted:#a99d7a; --ok:#7fd18b; --bad:#ff8a7a; --warn:#e8c468; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
          padding:env(safe-area-inset-top) 16px calc(32px + env(safe-area-inset-bottom)); }
-  main { max-width:640px; margin:0 auto; }
+  main { max-width:680px; margin:0 auto; }
   h1 { font-size:22px; color:var(--gold); margin:24px 0 4px; }
   p.sub { color:var(--muted); font-size:13px; margin:0 0 20px; }
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; }
-  label { display:block; font-size:13px; color:var(--muted); margin:0 0 6px; }
-  input { width:100%; font:16px ui-monospace,"SF Mono",Menlo,monospace; color:var(--text); background:#0f0d09;
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:16px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  label:first-child { margin-top:0; }
+  input { width:100%; font:15px ui-monospace,"SF Mono",Menlo,monospace; color:var(--text); background:#0f0d09;
           border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  details summary { cursor:pointer; color:var(--muted); font-size:13px; margin-top:10px; }
   button { width:100%; margin-top:12px; min-height:48px; font:inherit; font-weight:700; color:#1a1406; cursor:pointer;
            border-radius:12px; border:1px solid #8a6d1e; background:linear-gradient(180deg,var(--gold-hi),var(--gold) 60%,#b8921f); }
   button:disabled { opacity:.5; }
-  .out { display:none; margin-top:16px; background:#0f0d09; border:1px dashed var(--line); border-radius:10px; padding:12px;
-         font:13px/1.5 ui-monospace,"SF Mono",Menlo,monospace; word-break:break-all; white-space:pre-wrap; }
-  .badge { display:inline-block; padding:4px 10px; border-radius:8px; font-weight:700; font-size:12px; margin-bottom:8px; }
-  .badge.ok { background:rgba(127,209,139,.15); color:var(--ok); border:1px solid rgba(127,209,139,.4); }
-  .badge.bad { background:rgba(255,138,122,.15); color:var(--bad); border:1px solid rgba(255,138,122,.4); }
-  .row span.k { color:var(--muted); }
+  .status-list { display:none; margin-top:16px; }
+  .status-row { display:flex; align-items:flex-start; gap:8px; padding:8px 0; border-top:1px solid var(--line); font-size:13px; }
+  .status-row:first-child { border-top:0; }
+  .dot { width:10px; height:10px; border-radius:50%; margin-top:4px; flex:0 0 auto; }
+  .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); } .dot.warn { background:var(--warn); } .dot.skip { background:#555; }
+  .label { font-weight:700; } .label.ok{color:var(--ok)} .label.bad{color:var(--bad)} .label.warn{color:var(--warn)} .label.skip{color:var(--muted)}
+  .detail { color:var(--muted); font:12px/1.5 ui-monospace,"SF Mono",Menlo,monospace; word-break:break-all; margin-top:2px; }
+  .verdict { display:none; margin-top:14px; padding:12px; border-radius:10px; font-weight:800; text-align:center; letter-spacing:.04em; }
+  .verdict.ok { background:rgba(127,209,139,.15); color:var(--ok); border:1px solid rgba(127,209,139,.4); }
+  .verdict.bad { background:rgba(255,138,122,.15); color:var(--bad); border:1px solid rgba(255,138,122,.4); }
 </style>
 </head>
 <body>
 <main>
   <h1>Zero-Trust Evidence Verifier</h1>
-  <p class="sub">Fetches a manifest from IPFS and recomputes its hash entirely in this browser — nothing is sent anywhere.</p>
+  <p class="sub">Recomputes a manifest's RFC 8785 digest, checks its secp256k1 signature, and optionally reads the on-chain
+    record — all in this browser. A record existing is never treated as proof by itself; every check below runs independently
+    and the verdict requires all of them to pass.</p>
+
   <div class="panel">
     <label for="cidInput">IPFS CID or gateway URL</label>
     <input id="cidInput" type="text" placeholder="bafybei... or https://dweb.link/ipfs/..." autocapitalize="off" autocorrect="off" spellcheck="false">
-    <button id="runBtn" type="button">Run Verification</button>
-    <div id="out" class="out"></div>
-  </div>
-</main>
-<script>
-"use strict";
-/*
- * Canonicalization MUST match enterprise/backend/proof_engine.py's
- * canonicalize_and_hash: JSON with sorted object keys and compact
- * separators. This is a practical subset of canonical JSON, not a
- * certified RFC 8785 (JCS) implementation — see that module's docstring.
- */
-function canonicalize(value) {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return "[" + value.map(canonicalize).join(",") + "]";
-  const keys = Object.keys(value).sort();
-  return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonicalize(value[k])).join(",") + "}";
-}
 
-async function sha256Hex(text) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+    <details>
+      <summary>On-chain check (optional)</summary>
+      <label for="rpcInput">JSON-RPC URL</label>
+      <input id="rpcInput" type="text" placeholder="https://..." autocapitalize="off" autocorrect="off" spellcheck="false">
+      <label for="contractInput">GenesisRegistryV2 contract address</label>
+      <input id="contractInput" type="text" placeholder="0x..." autocapitalize="off" autocorrect="off" spellcheck="false">
+    </details>
+
+    <button id="runBtn" type="button">Run Verification</button>
+  </div>
+
+  <div id="statusList" class="status-list"></div>
+  <div id="verdict" class="verdict"></div>
+</main>
+<script type="module">
+import canonicalize from "https://cdn.jsdelivr.net/npm/canonicalize@5.1.0/+esm";
+import * as secp from "https://cdn.jsdelivr.net/npm/@noble/secp256k1@3.2.0/+esm";
+import { sha256 } from "https://cdn.jsdelivr.net/npm/@noble/hashes@2.4.0/sha2.js/+esm";
+import { hmac } from "https://cdn.jsdelivr.net/npm/@noble/hashes@2.4.0/hmac.js/+esm";
+
+// @noble/secp256k1 needs a hash/HMAC implementation wired in explicitly; it
+// ships none itself so callers can pick any audited one. We only ever call
+// verify() here (never sign), so this is used for internal curve math only.
+secp.hashes.sha256 = sha256;
+secp.hashes.hmacSha256 = (key, ...msgs) => hmac(sha256, key, secp.etc.concatBytes(...msgs));
+
+/**
+ * Status states this verifier can report. A manifest is only ever called
+ * "VERIFIED" when hash, signature AND (if configured) the chain record all
+ * independently pass — never because a record merely exists, and never
+ * because a public key happened to be missing so the signature check was
+ * skipped.
+ */
+const S = {
+  OK: "ok", BAD: "bad", WARN: "warn", SKIP: "skip",
+};
+
+function hexToBytes(hex) {
+  const clean = hex.replace(/^0x/i, "");
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
+  return out;
+}
+function bytesToHex(bytes) {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function resolveUrl(input) {
   const v = input.trim();
   if (/^https?:\/\//i.test(v)) return v;
-  const cid = v.replace(/^ipfs:\/\//i, "");
-  return "https://dweb.link/ipfs/" + cid;
+  return "https://dweb.link/ipfs/" + v.replace(/^ipfs:\/\//i, "");
 }
 
-function render(ok, lines) {
-  const out = document.getElementById("out");
-  out.style.display = "block";
-  out.innerHTML = "";
-  const badge = document.createElement("div");
-  badge.className = "badge " + (ok ? "ok" : "bad");
-  badge.textContent = ok ? "✓ HASH MATCHES — TAMPER-FREE" : "✗ HASH MISMATCH OR ERROR";
-  out.appendChild(badge);
-  lines.forEach((l) => { const d = document.createElement("div"); d.className = "row"; d.textContent = l; out.appendChild(d); });
+function row(status, label, detail) {
+  const div = document.createElement("div");
+  div.className = "status-row";
+  const dot = document.createElement("div");
+  dot.className = "dot " + status;
+  const text = document.createElement("div");
+  const l = document.createElement("div");
+  l.className = "label " + status;
+  l.textContent = label;
+  text.appendChild(l);
+  if (detail) {
+    const d = document.createElement("div");
+    d.className = "detail";
+    d.textContent = detail;
+    text.appendChild(d);
+  }
+  div.append(dot, text);
+  return div;
 }
 
 async function verifyManifest() {
   const btn = document.getElementById("runBtn");
+  const statusList = document.getElementById("statusList");
+  const verdictEl = document.getElementById("verdict");
+  statusList.innerHTML = "";
+  statusList.style.display = "block";
+  verdictEl.style.display = "none";
+
   const input = document.getElementById("cidInput").value.trim();
-  if (!input) { render(false, ["Enter a CID or gateway URL first."]); return; }
-  if (!window.crypto || !crypto.subtle) { render(false, ["Web Crypto is unavailable — open this page over https://."]); return; }
+  const rpcUrl = document.getElementById("rpcInput").value.trim();
+  const contractAddr = document.getElementById("contractInput").value.trim();
+
+  const results = []; // { status, label, detail }
+  const add = (status, label, detail) => results.push({ status, label, detail });
+
+  if (!input) {
+    add(S.BAD, "INVALID INPUT", "Enter a CID or gateway URL.");
+    render(results); return;
+  }
+  if (!window.crypto || !crypto.subtle) {
+    add(S.BAD, "ENVIRONMENT UNSUPPORTED", "Web Crypto unavailable — open this page over https://.");
+    render(results); return;
+  }
 
   btn.disabled = true; btn.textContent = "Verifying…";
   try {
-    const res = await fetch(resolveUrl(input));
-    if (!res.ok) throw new Error("HTTP " + res.status + " fetching manifest");
-    const manifest = await res.json();
-    if (!manifest || typeof manifest !== "object" || !("payload" in manifest) || !manifest.canonical_digest_sha256) {
-      throw new Error("Not a recognized proof manifest (expected 'payload' and 'canonical_digest_sha256').");
+    // --- 1. Retrieve the manifest -------------------------------------
+    let manifest;
+    try {
+      const res = await fetch(resolveUrl(input));
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      manifest = await res.json();
+    } catch (err) {
+      add(S.BAD, "IPFS RETRIEVAL FAILED", String(err && err.message || err));
+      render(results); return;
     }
 
-    const canonicalStr = canonicalize(manifest.payload);
-    const computed = await sha256Hex(canonicalStr);
-    const stated = String(manifest.canonical_digest_sha256).toLowerCase();
-    const ok = computed === stated;
+    // --- 2. Structural check -------------------------------------------
+    const hasShape = manifest && typeof manifest === "object"
+      && "payload" in manifest && manifest.digest && manifest.digest.value
+      && manifest.signature && manifest.signature.value;
+    if (!hasShape) {
+      add(S.BAD, "INVALID MANIFEST", "Missing payload/digest/signature — not a recognized proof manifest.");
+      render(results); return;
+    }
+    add(S.OK, "MANIFEST STRUCTURE OK", "proof_type: " + (manifest.proof_type || "(none)"));
 
-    render(ok, [
-      "Proof type: " + (manifest.proof_type || "(none)"),
-      "Computed hash: " + computed,
-      "Manifest hash: " + stated,
-      manifest.audit_trail && manifest.audit_trail.generated_at ? "Generated at: " + manifest.audit_trail.generated_at : ""
-    ].filter(Boolean));
-  } catch (err) {
-    render(false, ["Error: " + (err && err.message || err)]);
+    // --- 3. Recompute the RFC 8785 digest --------------------------------
+    const canonicalStr = canonicalize(manifest.payload);
+    const computedDigest = bytesToHex(sha256(new TextEncoder().encode(canonicalStr)));
+    const statedDigest = String(manifest.digest.value).toLowerCase();
+    const hashMatches = computedDigest === statedDigest;
+    add(hashMatches ? S.OK : S.BAD,
+        hashMatches ? "DIGEST MATCH" : "DIGEST MISMATCH",
+        "computed: " + computedDigest + "\nstated:   " + statedDigest);
+
+    // --- 4. Signature check — never optional -----------------------------
+    const sig = manifest.signature || {};
+    const pubKeyHex = sig.public_key;
+    let signatureValid = false;
+    if (!pubKeyHex) {
+      add(S.WARN, "SIGNATURE UNVERIFIED — KEY MISSING",
+          "The manifest carries no public_key, so the signature cannot be checked. This is NOT a pass.");
+    } else if (sig.algorithm !== "ECDSA" || sig.curve !== "secp256k1" || sig.encoding !== "compact-r-s-hex") {
+      add(S.BAD, "UNSUPPORTED SIGNATURE SCHEME", JSON.stringify({ algorithm: sig.algorithm, curve: sig.curve, encoding: sig.encoding }));
+    } else {
+      try {
+        const sigBytes = hexToBytes(sig.value);
+        const pubBytes = hexToBytes(pubKeyHex);
+        const digestBytes = hexToBytes(statedDigest);
+        signatureValid = secp.verify(sigBytes, digestBytes, pubBytes, { prehash: false });
+        add(signatureValid ? S.OK : S.BAD,
+            signatureValid ? "SIGNATURE VALID" : "SIGNATURE INVALID",
+            "public_key: " + pubKeyHex);
+      } catch (err) {
+        add(S.BAD, "SIGNATURE INVALID", "Could not parse/verify: " + (err && err.message || err));
+      }
+    }
+    const publicKeyPresent = Boolean(pubKeyHex);
+
+    // --- 5. Optional on-chain check ---------------------------------------
+    // chainState: "skipped" (genuinely not configured — doesn't block the
+    // verdict) | "ok" (record active, CID + proofType both match) |
+    // "failed" (configured but something didn't check out — DOES block the
+    // verdict; a network error here must never be silently treated the same
+    // as "not configured").
+    let chainState = "skipped";
+    if (!rpcUrl || !contractAddr) {
+      add(S.SKIP, "CHAIN CHECK SKIPPED — NOT CONFIGURED", "Provide an RPC URL and contract address to check an on-chain anchor.");
+    } else {
+      try {
+        const { ethers } = await import("https://cdn.jsdelivr.net/npm/ethers@6.17.0/+esm");
+        const provider = new ethers.JsonRpcProvider(rpcUrl);
+        const abi = [
+          "function verifyProof(bytes32) view returns (bool isValid, string ipfsCID, string proofType, uint256 timestamp, address issuer, uint8 status)",
+        ];
+        const contract = new ethers.Contract(contractAddr, abi, provider);
+        const network = await provider.getNetwork();
+        const [, onChainCid, onChainProofType, ts, issuer, status] =
+          await contract.verifyProof("0x" + statedDigest);
+
+        const STATUS_NAMES = ["NonExistent", "Active", "Revoked"];
+        const statusName = STATUS_NAMES[Number(status)] || String(status);
+        const chainInfo = `chainId: ${network.chainId}\ncontract: ${contractAddr}\nissuer: ${issuer}\n` +
+          `status: ${statusName}\ntimestamp: ${new Date(Number(ts) * 1000).toISOString()}\n` +
+          `on-chain CID: ${onChainCid}\non-chain proofType: ${onChainProofType}`;
+
+        if (statusName === "NonExistent") {
+          add(S.BAD, "CHAIN RECORD NOT FOUND", `chainId ${network.chainId}, contract ${contractAddr}\nlooked up hash: 0x${statedDigest}`);
+          chainState = "failed";
+        } else if (statusName === "Revoked") {
+          add(S.BAD, "PROOF REVOKED", chainInfo);
+          chainState = "failed";
+        } else {
+          // Extract the bare CID the user actually asked to verify (strip a
+          // gateway URL down to its /ipfs/<cid> path, or an ipfs:// prefix)
+          // so "the CID I looked up" and "the CID anchored on-chain" are
+          // compared as CIDs, not as whatever URL shape happened to be typed.
+          const requestedCid = (input.match(/\/ipfs\/([^/?#]+)/i)?.[1] || input.replace(/^ipfs:\/\//i, "")).trim();
+          const cidMatches = Boolean(onChainCid) && onChainCid === requestedCid;
+          const proofTypeMatches = !manifest.proof_type || onChainProofType === manifest.proof_type;
+
+          if (!cidMatches) {
+            add(S.BAD, "CHAIN CID MISMATCH", chainInfo + `\nrequested CID: ${requestedCid}\n(hash matches on-chain, but it was anchored under a different CID)`);
+            chainState = "failed";
+          } else if (!proofTypeMatches) {
+            add(S.BAD, "CHAIN PROOF TYPE MISMATCH", chainInfo + `\nmanifest proof_type: ${manifest.proof_type}`);
+            chainState = "failed";
+          } else {
+            add(S.OK, "CHAIN RECORD ACTIVE", chainInfo);
+            chainState = "ok";
+          }
+        }
+      } catch (err) {
+        add(S.BAD, "CHAIN CHECK FAILED", String(err && err.message || err));
+        chainState = "failed"; // configured-but-erroring must block the verdict, never fall back to "skipped"
+      }
+    }
+
+    // --- Verdict: every applicable check must independently pass ----------
+    const cryptoVerified = hashMatches && signatureValid && publicKeyPresent;
+    const overallOk = cryptoVerified && chainState !== "failed";
+
+    if (overallOk) {
+      add(S.OK, "PROVENANCE CONFIRMED" + (chainState === "skipped" ? " (IPFS + signature only — no chain check configured)" : " (IPFS + signature + chain)"));
+    } else {
+      add(S.BAD, "PROVENANCE UNCONFIRMED", "One or more required checks above did not pass.");
+    }
+
+    render(results, overallOk);
   } finally {
     btn.disabled = false; btn.textContent = "Run Verification";
+  }
+}
+
+function render(results, overallOk) {
+  const statusList = document.getElementById("statusList");
+  const verdictEl = document.getElementById("verdict");
+  statusList.innerHTML = "";
+  for (const r of results) statusList.appendChild(row(r.status, r.label, r.detail));
+
+  if (typeof overallOk === "boolean") {
+    verdictEl.style.display = "block";
+    verdictEl.className = "verdict " + (overallOk ? "ok" : "bad");
+    verdictEl.textContent = overallOk ? "✓ VERIFIED" : "✗ NOT VERIFIED";
   }
 }
 

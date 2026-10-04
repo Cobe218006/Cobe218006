@@ -173,8 +173,8 @@ There are two ways to do this. Option A is permanent and is the one you should p
   (MetaMask's wallet connection works only inside MetaMask's own browser on iPhone, not in Safari.)
 - **DO:** Tap **Connect Sovereign Wallet**, then **Connect** in the MetaMask popup.
   - **WHAT YOU SEE:** `Connected: 0x…` plus a chain number (`11155111` is Sepolia, `1` is Ethereum mainnet).
-- **DO:** Tap **Generate Quantum Key**.
-  - **WHAT YOU SEE:** `ECDSA P-256 key ready.` and a 64-character fingerprint.
+- **DO:** Tap **Generate Signing Key**.
+  - **WHAT YOU SEE:** `ECDSA secp256k1 key ready.` and a 64-character fingerprint. (The page loads a small signing library from a CDN the first time you do this — it needs a working internet connection.)
 - **DO:** Tap **Run Divinity Assessment** and answer the 5 popups with numbers from 1 to 5.
   - **WHAT YOU SEE:** A large score such as `88 / 100`, then **Acceptable alignment (≥ 81%)** or **Below the 81% alignment threshold**.
 - **DO:** Paste your QUANTUM OUTPUT into the Quantum Verification box and tap **Hash Quantum Output**.
@@ -260,7 +260,7 @@ relying on them. This protocol needs only IBM's Open Plan.
 - ✅ Each evidence CID is the content hash of its file, so the files can't be swapped without changing the manifest.
 - ✅ The quantum hash links the manifest to a specific IBM job (backend and job ID) and its measured results.
 - ⚠️ IBM job results can be viewed only from the owner's IBM account. Others have to trust your receipt unless you share a screenshot or export from IBM. The hash proves the numbers weren't edited *after* they were recorded, not that they came from IBM.
-- ⚠️ The "Quantum Key" is a standard ECDSA P-256 key generated in the browser. It is not post-quantum, and it is forgotten when the page reloads. Its signature proves only that the manifest wasn't altered after you downloaded it.
+- ⚠️ The signing key is a standard ECDSA secp256k1 key generated in the browser (the same scheme `enterprise/backend/proof_engine.py` and `enterprise/public/verify.html` use, so a manifest from any of them verifies the same way). It is not post-quantum, and it is forgotten when the page reloads. Its signature proves only that the manifest wasn't altered after you downloaded it.
 
 ---
 

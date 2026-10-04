@@ -68,8 +68,8 @@ export default function App() {
       const response = await fetch("/api/quantum/execute", { method: "POST" });
       if (!response.ok) throw new Error("Backend returned HTTP " + response.status);
       const data = await response.json(); // expected: { manifest, ipfsCid }
-      if (!data.manifest || !data.manifest.canonical_digest_sha256) {
-        throw new Error("Backend response is missing manifest.canonical_digest_sha256");
+      if (!data.manifest || !data.manifest.digest || !data.manifest.digest.value) {
+        throw new Error("Backend response is missing manifest.digest.value");
       }
       setQuantumResult(data);
     } catch (err) {
@@ -91,9 +91,9 @@ export default function App() {
       const contract = new ethers.Contract(GENESIS_REGISTRY_ADDRESS, GENESIS_REGISTRY_ABI, signer);
 
       const tx = await contract.anchorProof(
-        "0x" + quantumResult.manifest.canonical_digest_sha256,
+        "0x" + quantumResult.manifest.digest.value,
         quantumResult.ipfsCid || "",
-        "QUANTUM_GHZ"
+        quantumResult.manifest.proof_type || "QUANTUM_GHZ"
       );
       setStatusMsg({ ok: true, text: "Transaction submitted: " + tx.hash + " — waiting for confirmation…" });
       await tx.wait();
@@ -165,10 +165,11 @@ export default function App() {
 
               {quantumResult && (
                 <div className="bg-slate-950 p-4 rounded-md border border-slate-800 font-mono text-xs space-y-2 text-slate-300">
-                  <p><span className="text-amber-400">Backend:</span> {quantumResult.manifest.payload?.backend_name}</p>
-                  <p><span className="text-amber-400">Job ID:</span> {quantumResult.manifest.payload?.job_id}</p>
-                  <p><span className="text-amber-400">GHZ fidelity:</span> {((quantumResult.manifest.payload?.ghz_fidelity ?? 0) * 100).toFixed(2)}%</p>
-                  <p><span className="text-amber-400">SHA-256 digest:</span> {quantumResult.manifest.canonical_digest_sha256}</p>
+                  <p><span className="text-amber-400">Backend:</span> {quantumResult.manifest.payload?.execution?.backend_name}</p>
+                  <p><span className="text-amber-400">Job ID:</span> {quantumResult.manifest.payload?.execution?.job_id}</p>
+                  <p><span className="text-amber-400">GHZ basis-population fidelity:</span> {((quantumResult.manifest.payload?.ghz_computational_basis_population_fidelity?.value ?? 0) * 100).toFixed(2)}%
+                    <span className="text-slate-500"> (computational-basis population, not full state fidelity)</span></p>
+                  <p><span className="text-amber-400">SHA-256 digest:</span> {quantumResult.manifest.digest?.value}</p>
                   <button
                     onClick={anchorOnChain}
                     className="mt-2 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded text-xs font-semibold"

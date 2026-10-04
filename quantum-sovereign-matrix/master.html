@@ -116,11 +116,14 @@
 
   <!-- 4. KEY -->
   <section>
-    <h2>Quantum Key</h2>
-    <p class="muted">ECDSA P-256 signing key made on this device. It signs the manifest you download.
-      The private key never leaves the browser and is forgotten when the page reloads.
-      (P-256 is classical cryptography, not post-quantum.)</p>
-    <div class="row"><button type="button" id="btnKey">Generate Quantum Key</button></div>
+    <h2>Signing Key</h2>
+    <p class="muted">ECDSA secp256k1 signing key made on this device (via a bundled @noble/secp256k1 —
+      browsers' built-in Web Crypto cannot do secp256k1, only P-256/P-384/P-521, so a pure-JS implementation
+      is used instead). secp256k1 is used throughout this protocol — the Python backend, this page, and the
+      verifier all sign and check the same way. It signs the manifest you download. The private key never
+      leaves the browser and is forgotten when the page reloads. (This is classical cryptography, not
+      post-quantum, despite the name of this app.)</p>
+    <div class="row"><button type="button" id="btnKey">Generate Signing Key</button></div>
     <div class="out" id="keyOut">No key yet</div>
   </section>
 
@@ -213,11 +216,41 @@ const CONFIG = {
   const CID_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/;
   const HEX64_RE = /^[0-9a-f]{64}$/;
 
-  const state = { account: null, chainId: null, keyPair: null, publicJwk: null, keyFingerprint: null,
+  const state = { account: null, chainId: null, secretKey: null, publicKeyHex: null, keyFingerprint: null,
                   quantumHash: null, assessment: null, lastManifest: null };
 
   const $ = (id) => document.getElementById(id);
   const enc = new TextEncoder();
+
+  /* ---------- lazy-loaded crypto libraries (CDN ESM, cached after first load) ----------
+   * Matches enterprise/backend/proof_engine.py and enterprise/public/verify.html exactly:
+   * RFC 8785 (JCS) canonicalization + ECDSA secp256k1 over the raw digest bytes, compact
+   * (64-byte r||s) encoding. This was cross-checked byte-for-byte against the Python side
+   * (including the low-S case that silently breaks naive cross-library verification). */
+  let _secpModule = null, _canonicalizeFn = null;
+  async function loadSecp() {
+    if (_secpModule) return _secpModule;
+    const [secp, { sha256 }, { hmac }] = await Promise.all([
+      import("https://cdn.jsdelivr.net/npm/@noble/secp256k1@3.2.0/+esm"),
+      import("https://cdn.jsdelivr.net/npm/@noble/hashes@2.4.0/sha2.js/+esm"),
+      import("https://cdn.jsdelivr.net/npm/@noble/hashes@2.4.0/hmac.js/+esm"),
+    ]);
+    secp.hashes.sha256 = sha256;
+    secp.hashes.hmacSha256 = (key, ...msgs) => hmac(sha256, key, secp.etc.concatBytes(...msgs));
+    _secpModule = secp;
+    return secp;
+  }
+  async function loadCanonicalize() {
+    if (_canonicalizeFn) return _canonicalizeFn;
+    const mod = await import("https://cdn.jsdelivr.net/npm/canonicalize@5.1.0/+esm");
+    _canonicalizeFn = mod.default;
+    return _canonicalizeFn;
+  }
+  async function canonicalDigestHex(payload) {
+    const canonicalize = await loadCanonicalize();
+    const canonicalStr = canonicalize(payload);
+    return bufToHex(await crypto.subtle.digest("SHA-256", enc.encode(canonicalStr)));
+  }
 
   /* ---------- storage (fails safe in private mode) ---------- */
   function loadOverrides() {
@@ -240,8 +273,11 @@ const CONFIG = {
   const isCid = (c) => CID_RE.test(String(c || "").trim());
   const isSet = (v) => v && !/^PASTE_/.test(String(v));
   const bufToHex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
-  function bufToB64(buf) {
-    let s = ""; new Uint8Array(buf).forEach((b) => { s += String.fromCharCode(b); }); return btoa(s);
+  function hexToBytes(hex) {
+    const clean = String(hex).replace(/^0x/i, "");
+    const out = new Uint8Array(clean.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
+    return out;
   }
   async function sha256Hex(text) {
     return bufToHex(await crypto.subtle.digest("SHA-256", enc.encode(text)));
@@ -366,15 +402,17 @@ const CONFIG = {
   async function generateKey() {
     const out = $("keyOut");
     if (needsCrypto(out)) return;
+    setOut(out, "Loading secp256k1 library…");
     try {
-      state.keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
-      const jwk = await crypto.subtle.exportKey("jwk", state.keyPair.publicKey);
-      state.publicJwk = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y };
-      const raw = await crypto.subtle.exportKey("raw", state.keyPair.publicKey);
-      state.keyFingerprint = bufToHex(await crypto.subtle.digest("SHA-256", raw));
-      setOut(out, "ECDSA P-256 key ready.\nPublic key fingerprint (SHA-256):\n" + state.keyFingerprint, "ok");
+      const secp = await loadSecp();
+      state.secretKey = secp.utils.randomSecretKey();
+      const pubBytes = secp.getPublicKey(state.secretKey, false); // uncompressed: 0x04 || X(32B) || Y(32B)
+      state.publicKeyHex = bufToHex(pubBytes);
+      state.keyFingerprint = bufToHex(await crypto.subtle.digest("SHA-256", pubBytes));
+      setOut(out, "ECDSA secp256k1 key ready.\nPublic key fingerprint (SHA-256):\n" + state.keyFingerprint, "ok");
     } catch (err) {
-      setOut(out, "Key generation failed: " + (err && err.message || err), "bad");
+      setOut(out, "Key generation failed (check your network connection — this loads a small library from a CDN): "
+        + (err && err.message || err), "bad");
     }
   }
 
@@ -407,12 +445,18 @@ const CONFIG = {
                                    : "Below the " + CONFIG.assessment.threshold + "% alignment threshold.", aligned ? "ok" : "bad");
   }
 
-  /* ---------- 6. manifest ---------- */
+  /* ---------- 6. manifest ----------
+   * Shape matches enterprise/backend/proof_engine.py's build_proof_manifest
+   * and what enterprise/public/verify.html expects: a top-level `payload`
+   * object, canonicalized via RFC 8785 (JCS), SHA-256-hashed, and signed
+   * with ECDSA secp256k1 over the raw digest bytes (compact r||s hex) —
+   * the SAME scheme everywhere in this protocol, producer and verifier
+   * alike, cross-checked byte-for-byte with the Python side. */
   async function buildManifest() {
     const c = cfg();
     const q = c.quantum;
-    const manifest = {
-      schema: "quantum-sovereign-matrix/manifest@1",
+    const payload = {
+      schema: "quantum-sovereign-matrix/manifest@2",
       name: CONFIG.manifestName,
       version: CONFIG.manifestVersion,
       created_at: new Date().toISOString(),
@@ -435,6 +479,9 @@ const CONFIG = {
         return isCid(cid) ? { cid, uri: "ipfs://" + cid, gateway_url: "https://dweb.link/ipfs/" + cid }
                           : { cid: null, uri: null, gateway_url: null };
       })(),
+      // Fails closed on placeholders: unset/placeholder quantum fields become
+      // `null`, never a fabricated-looking value like a default backend name
+      // or a fake job id. manifestWarnings() surfaces exactly what's missing.
       quantum_verification: {
         provider: q.provider || null,
         backend: isSet(q.backend) ? q.backend : null,
@@ -448,32 +495,44 @@ const CONFIG = {
       divinity_assessment: state.assessment
         ? { score: state.assessment.score, max: 100, threshold: state.assessment.threshold,
             aligned: state.assessment.aligned, assessed_at: state.assessment.assessed_at }
-        : null,
+        : null
+    };
+
+    const digestHex = await canonicalDigestHex(payload);
+    const manifest = {
+      manifest_version: "2.0.0",
+      proof_type: "SOVEREIGN_EVIDENCE_MANIFEST",
+      payload,
+      canonicalization: "RFC 8785 (JSON Canonicalization Scheme)",
+      digest: { algorithm: "SHA-256", encoding: "hex", value: digestHex },
       signature: null
     };
 
-    if (state.keyPair) {
-      const unsigned = Object.assign({}, manifest); delete unsigned.signature;
-      const payload = JSON.stringify(unsigned);
-      const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, state.keyPair.privateKey, enc.encode(payload));
+    if (state.secretKey) {
+      const secp = await loadSecp();
+      const digestBytes = hexToBytes(digestHex);
+      // @noble/secp256k1's sign() emits canonical low-S by default, matching
+      // the Python backend's explicit sigencode_string_canonize — required
+      // for a strict verifier (this library's own verify(), used by
+      // verify.html) to accept the signature at all.
+      const sigBytes = secp.sign(digestBytes, state.secretKey, { prehash: false });
       manifest.signature = {
-        algorithm: "ECDSA-P256-SHA256 (IEEE P1363 r||s)",
-        covers: "JSON.stringify(manifest without the 'signature' field)",
-        payload_sha256: await sha256Hex(payload),
-        public_key_jwk: state.publicJwk,
-        public_key_fingerprint_sha256: state.keyFingerprint,
-        value_base64: bufToB64(sig)
+        algorithm: "ECDSA",
+        curve: "secp256k1",
+        encoding: "compact-r-s-hex",
+        value: bufToHex(sigBytes),
+        public_key: state.publicKeyHex
       };
     }
     return manifest;
   }
   function manifestWarnings(m) {
     const w = [];
-    const missing = m.evidence.filter((e) => !e.cid).map((e) => e.title);
+    const missing = m.payload.evidence.filter((e) => !e.cid).map((e) => e.title);
     if (missing.length) w.push("Missing CIDs: " + missing.join(", "));
-    if (!m.quantum_verification.sha256) w.push("No quantum hash");
-    if (!m.quantum_verification.job_id) w.push("No IBM job ID");
-    if (!m.issuer.wallet) w.push("Wallet not connected");
+    if (!m.payload.quantum_verification.sha256) w.push("No quantum hash");
+    if (!m.payload.quantum_verification.job_id) w.push("No IBM job ID");
+    if (!m.payload.issuer.wallet) w.push("Wallet not connected");
     if (!m.signature) w.push("Unsigned (generate a key first to sign)");
     return w;
   }
@@ -485,7 +544,6 @@ const CONFIG = {
       const text = JSON.stringify(m, null, 2) + "\n";
       JSON.parse(text); // guarantee structurally valid JSON before offering it
       state.lastManifest = text;
-      const fileSha = await sha256Hex(text);
 
       let delivered = false;
       const blob = new Blob([text], { type: "application/json" });
@@ -507,7 +565,7 @@ const CONFIG = {
 
       const warn = manifestWarnings(m);
       setOut(out,
-        "File SHA-256 (use as bytes32 in Remix):\n0x" + fileSha + "\n\n" +
+        "Evidence hash to anchor (bytes32 for GenesisRegistryV2.anchorProof):\n0x" + m.digest.value + "\n\n" +
         (warn.length ? "⚠ " + warn.join("\n⚠ ") + "\n\n" : "") +
         "If no download appeared, tap Copy Manifest JSON and paste it into a file.\n\n" + text,
         warn.length ? "bad" : "ok");
@@ -517,12 +575,16 @@ const CONFIG = {
   }
   async function copyManifest() {
     const out = $("manifestOut");
-    if (!state.lastManifest) {
-      if (needsCrypto(out)) return;
-      state.lastManifest = JSON.stringify(await buildManifest(), null, 2) + "\n";
+    try {
+      if (!state.lastManifest) {
+        if (needsCrypto(out)) return;
+        state.lastManifest = JSON.stringify(await buildManifest(), null, 2) + "\n";
+      }
+      const ok = await copyText(state.lastManifest);
+      setOut(out, (ok ? "Manifest copied to clipboard.\n\n" : "Copy blocked — press and hold to select.\n\n") + state.lastManifest, ok ? "ok" : "bad");
+    } catch (err) {
+      setOut(out, "Could not build manifest: " + (err && err.message || err), "bad");
     }
-    const ok = await copyText(state.lastManifest);
-    setOut(out, (ok ? "Manifest copied to clipboard.\n\n" : "Copy blocked — press and hold to select.\n\n") + state.lastManifest, ok ? "ok" : "bad");
   }
 
   /* ---------- 7. setup ---------- */
