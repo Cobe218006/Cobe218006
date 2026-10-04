@@ -222,3 +222,83 @@ def test_record_anchor_requires_explicit_real_values():
     assert anchored["ipfs"]["cid"] == "bafytestcid"
     # The original manifest object must be untouched (no accidental aliasing).
     assert manifest["blockchain"]["tx_hash"] is None
+
+
+# --- Claim Engine -------------------------------------------------------------
+
+def _valid_claim(**overrides):
+    claim = {
+        "claim_id": "claim-001",
+        "statement": "This wallet controls the signing key in this manifest.",
+        "claim_type": "AUTHORIZATION",
+        "subject": "did:pkh:eip155:11155111:0x" + "ab" * 20,
+        "interpretation": "SIGNED",
+        "evidence_refs": [],
+    }
+    claim.update(overrides)
+    return claim
+
+
+def test_manifest_accepts_a_payload_with_valid_claims():
+    engine = ProofEngine(private_key_pem=_signing_key_pem())
+    payload = dict(BUSINESS_PAYLOAD, claims=[_valid_claim()])
+    manifest = engine.build_proof_manifest("BUSINESS_EVIDENCE", payload)
+    assert manifest["payload"]["claims"][0]["claim_type"] == "AUTHORIZATION"
+    assert manifest["signature"]["value"]
+
+
+def test_manifest_with_no_claims_is_still_valid():
+    engine = ProofEngine(private_key_pem=_signing_key_pem())
+    manifest = engine.build_proof_manifest("BUSINESS_EVIDENCE", BUSINESS_PAYLOAD)
+    assert "claims" not in manifest["payload"]
+
+
+def test_fails_closed_on_unknown_claim_type():
+    engine = ProofEngine(private_key_pem=_signing_key_pem())
+    payload = dict(BUSINESS_PAYLOAD, claims=[_valid_claim(claim_type="SOVEREIGN_STATUS")])
+    try:
+        engine.build_proof_manifest("BUSINESS_EVIDENCE", payload)
+        assert False, "expected ProofEngineError for an invented claim_type"
+    except ProofEngineError as exc:
+        assert "claim_type" in str(exc)
+
+
+def test_fails_closed_on_unknown_interpretation():
+    engine = ProofEngine(private_key_pem=_signing_key_pem())
+    payload = dict(BUSINESS_PAYLOAD, claims=[_valid_claim(interpretation="DIVINELY_REVEALED")])
+    try:
+        engine.build_proof_manifest("BUSINESS_EVIDENCE", payload)
+        assert False, "expected ProofEngineError for an invented interpretation"
+    except ProofEngineError as exc:
+        assert "interpretation" in str(exc)
+
+
+def test_fails_closed_on_duplicate_claim_id():
+    engine = ProofEngine(private_key_pem=_signing_key_pem())
+    payload = dict(BUSINESS_PAYLOAD, claims=[_valid_claim(), _valid_claim()])
+    try:
+        engine.build_proof_manifest("BUSINESS_EVIDENCE", payload)
+        assert False, "expected ProofEngineError for a duplicate claim_id"
+    except ProofEngineError as exc:
+        assert "Duplicate claim_id" in str(exc)
+
+
+def test_fails_closed_on_claim_missing_required_field():
+    engine = ProofEngine(private_key_pem=_signing_key_pem())
+    claim = _valid_claim()
+    del claim["subject"]
+    payload = dict(BUSINESS_PAYLOAD, claims=[claim])
+    try:
+        engine.build_proof_manifest("BUSINESS_EVIDENCE", payload)
+        assert False, "expected ProofEngineError for a claim missing 'subject'"
+    except ProofEngineError as exc:
+        assert "subject" in str(exc)
+
+
+# --- DID helper -----------------------------------------------------------
+
+def test_did_pkh_format():
+    from backend.proof_engine import did_pkh
+    assert did_pkh(11155111, "0xABCDEF0000000000000000000000000000ABCD") == (
+        "did:pkh:eip155:11155111:0xabcdef0000000000000000000000000000abcd"
+    )

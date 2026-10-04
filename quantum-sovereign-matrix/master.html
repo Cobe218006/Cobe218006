@@ -146,6 +146,24 @@
     <div class="out" id="keyOut">No key yet</div>
   </section>
 
+  <!-- 4b. COVENANT -->
+  <section>
+    <h2>Covenant</h2>
+    <p class="muted">A versioned set of principles/rules you commit to, signed with your Signing Key above and
+      hashed the same way as a manifest. This is a policy document, not identity or legal status: signing a
+      covenant proves the holder of this key authored this exact text at this time &mdash; nothing about who
+      that holder is, and nothing about enforceability. Generate a Signing Key first.</p>
+    <label for="covenantVersion">Version</label>
+    <input type="text" id="covenantVersion" value="1.0.0" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <label for="covenantText" style="margin-top:10px">Principles / rules</label>
+    <textarea id="covenantText" spellcheck="true" placeholder="State the principles or rules this covenant commits you to."></textarea>
+    <div class="row" style="margin-top:10px">
+      <button type="button" id="btnCovenant">Seal Covenant</button>
+      <button type="button" id="btnCopyCovenant" class="secondary">Copy Covenant JSON</button>
+    </div>
+    <div class="out" id="covenantOut">Not sealed</div>
+  </section>
+
   <!-- 5. DIVINITY ASSESSMENT -->
   <section>
     <h2>Divinity Assessment</h2>
@@ -251,7 +269,15 @@ const CONFIG = {
   const HEX64_RE = /^[0-9a-f]{64}$/;
 
   const state = { account: null, chainId: null, secretKey: null, publicKeyHex: null, keyFingerprint: null,
-                  quantumHash: null, assessment: null, lastManifest: null, googleIdentity: null };
+                  quantumHash: null, assessment: null, lastManifest: null, googleIdentity: null, lastCovenant: null };
+
+  /* did:pkh — a DID method that is just an existing blockchain account
+   * (CAIP-10 / did:pkh). Tied to the connected wallet (the issuer that
+   * would anchor on-chain), deliberately separate from the signing key's
+   * public_key and from any SSO identity_claims. */
+  function didPkh(chainId, address) {
+    return "did:pkh:eip155:" + chainId + ":" + String(address).toLowerCase();
+  }
 
   const $ = (id) => document.getElementById(id);
   const enc = new TextEncoder();
@@ -576,7 +602,10 @@ const CONFIG = {
       created_at: new Date().toISOString(),
       issuer: {
         wallet: state.account,
-        chain_id: state.chainId ? parseInt(state.chainId, 16) : null
+        chain_id: state.chainId ? parseInt(state.chainId, 16) : null,
+        did: state.account && state.chainId
+          ? didPkh(parseInt(state.chainId, 16), state.account)
+          : null
       },
       // Deliberately separate from `issuer` (wallet) and `signature.public_key`
       // (signing key) — a wallet address, a signing key, and an SSO identity
@@ -714,6 +743,61 @@ const CONFIG = {
     }
   }
 
+  /* ---------- 4b. covenant ----------
+   * A versioned, signed policy document — same canonicalize -> SHA-256 ->
+   * sign pipeline as the manifest, reusing the already-generated signing
+   * key. Produces a standalone JSON object (not nested in the manifest)
+   * so it can be anchored and verified independently via GenesisRegistryV2
+   * with proofType "COVENANT", the same manual-anchor flow already used
+   * for manifests (see downloadManifest's "hash to anchor" output). */
+  async function sealCovenant() {
+    const out = $("covenantOut");
+    const text = $("covenantText").value.trim();
+    const version = $("covenantVersion").value.trim() || "1.0.0";
+    if (!text) { setOut(out, "Write the principles/rules this covenant commits you to first.", "bad"); return; }
+    if (needsCrypto(out)) return;
+    if (!state.secretKey) { setOut(out, "Generate a Signing Key first (section above).", "bad"); return; }
+    try {
+      const body = {
+        schema: "quantum-sovereign-matrix/covenant@1",
+        version,
+        principles: text,
+        did: state.account && state.chainId ? didPkh(parseInt(state.chainId, 16), state.account) : null,
+        signer_public_key: state.publicKeyHex,
+        sealed_at: new Date().toISOString()
+      };
+      const digestHex = await canonicalDigestHex(body);
+      const secp = await loadSecp();
+      const digestBytes = hexToBytes(digestHex);
+      const sigBytes = secp.sign(digestBytes, state.secretKey, { prehash: false });
+      const covenant = {
+        covenant_version: "1.0.0",
+        proof_type: "COVENANT",
+        body,
+        canonicalization: "RFC 8785 (JSON Canonicalization Scheme)",
+        digest: { algorithm: "SHA-256", encoding: "hex", value: digestHex },
+        signature: {
+          algorithm: "ECDSA", curve: "secp256k1", encoding: "compact-r-s-hex",
+          value: bufToHex(sigBytes), public_key: state.publicKeyHex
+        }
+      };
+      state.lastCovenant = JSON.stringify(covenant, null, 2) + "\n";
+      setOut(out,
+        "Covenant sealed (version " + version + ").\n\n" +
+        "Hash to anchor (bytes32 for GenesisRegistryV2.anchorProof, proofType \"COVENANT\"):\n0x" + digestHex + "\n\n" +
+        state.lastCovenant,
+        "ok");
+    } catch (err) {
+      setOut(out, "Could not seal covenant: " + (err && err.message || err), "bad");
+    }
+  }
+  async function copyCovenant() {
+    const out = $("covenantOut");
+    if (!state.lastCovenant) { setOut(out, "Seal a covenant first.", "bad"); return; }
+    const ok = await copyText(state.lastCovenant);
+    setOut(out, (ok ? "Covenant copied to clipboard.\n\n" : "Copy blocked — press and hold to select.\n\n") + state.lastCovenant, ok ? "ok" : "bad");
+  }
+
   /* ---------- 7. setup ---------- */
   const SETUP_FIELDS = () => {
     const c = cfg();
@@ -797,6 +881,8 @@ const CONFIG = {
   $("btnHash").addEventListener("click", hashQuantum);
   $("btnCopyHash").addEventListener("click", copyHash);
   $("btnKey").addEventListener("click", generateKey);
+  $("btnCovenant").addEventListener("click", sealCovenant);
+  $("btnCopyCovenant").addEventListener("click", copyCovenant);
   $("btnAssess").addEventListener("click", runAssessment);
   $("btnManifest").addEventListener("click", downloadManifest);
   $("btnCopyManifest").addEventListener("click", copyManifest);

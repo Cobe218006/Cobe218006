@@ -52,6 +52,18 @@ CANONICALIZATION = {"name": "RFC8785-JCS", "version": "1.0"}
 # This is deliberately shallow (presence checks, not full JSON Schema) — it
 # exists to fail closed on an obviously incomplete domain payload, not to be
 # a complete validator for every field shape.
+# --- Claim Engine ------------------------------------------------------------
+# A payload MAY carry a `claims` array. Each claim separates WHAT is being
+# asserted (claim_type) from HOW it was arrived at (interpretation) — a
+# cryptographic signature over the manifest validates the integrity and
+# authenticity of the record; it does not by itself validate the truth of
+# any individual claim inside it. See enterprise/VERIFICATION_SPEC.md.
+CLAIM_TYPES = {"IDENTITY", "OWNERSHIP", "AUTHORIZATION"}
+CLAIM_INTERPRETATIONS = {
+    "OBSERVED", "CALCULATED", "SIGNED", "ANCHORED",
+    "PROVIDER_REPORTED", "INFERRED", "INTERPRETED", "UNVERIFIED",
+}
+
 PROOF_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "QUANTUM_GHZ_EXECUTION": {
         "schema_version": "quantum-ghz@1",
@@ -72,6 +84,19 @@ PROOF_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "required": ["evidence_type", "description"],
     },
 }
+
+
+def did_pkh(chain_id: int, address: str) -> str:
+    """did:pkh — a DID method that is just an existing blockchain account
+    (CAIP-10 / did:pkh), e.g. did:pkh:eip155:1:0xabc...
+
+    This is the issuer's identity DID — tied to the wallet that will anchor
+    the proof on-chain (msg.sender in GenesisRegistryV2), deliberately
+    distinct from `signature.public_key` (the secp256k1 signing key) and
+    from any SSO identity claim. See the three-way identity separation
+    principle in enterprise/README.md.
+    """
+    return f"did:pkh:eip155:{chain_id}:{address.lower()}"
 
 
 class ProofEngineError(RuntimeError):
@@ -213,6 +238,41 @@ class ProofEngine:
                 raise ProofEngineError(f"{proof_type} payload.credential is missing: {missing_cred}")
         return schema["schema_version"]
 
+    @staticmethod
+    def validate_claims(claims: Optional[List[Dict[str, Any]]]) -> None:
+        """Fail closed on a malformed `payload.claims` array.
+
+        `claims` is optional — a payload with none is valid. When present,
+        every claim must separate claim_type (what is asserted) from
+        interpretation (how it was arrived at); neither may be invented
+        values, and claim_id must be unique within the array.
+        """
+        if claims is None:
+            return
+        if not isinstance(claims, list):
+            raise ProofEngineError("payload.claims must be a list.")
+        seen_ids: set[str] = set()
+        required = ("claim_id", "statement", "claim_type", "subject", "interpretation")
+        for i, claim in enumerate(claims):
+            if not isinstance(claim, dict):
+                raise ProofEngineError(f"claims[{i}] must be an object.")
+            missing = [k for k in required if k not in claim]
+            if missing:
+                raise ProofEngineError(f"claims[{i}] is missing required field(s): {missing}")
+            if claim["claim_type"] not in CLAIM_TYPES:
+                raise ProofEngineError(
+                    f"claims[{i}].claim_type {claim['claim_type']!r} not in {sorted(CLAIM_TYPES)}"
+                )
+            if claim["interpretation"] not in CLAIM_INTERPRETATIONS:
+                raise ProofEngineError(
+                    f"claims[{i}].interpretation {claim['interpretation']!r} not in {sorted(CLAIM_INTERPRETATIONS)}"
+                )
+            if claim["claim_id"] in seen_ids:
+                raise ProofEngineError(f"Duplicate claim_id: {claim['claim_id']!r}")
+            seen_ids.add(claim["claim_id"])
+            if "evidence_refs" in claim and not isinstance(claim["evidence_refs"], list):
+                raise ProofEngineError(f"claims[{i}].evidence_refs must be a list.")
+
     def build_proof_manifest(
         self,
         proof_type: str,
@@ -235,6 +295,7 @@ class ProofEngine:
         can mistake it for a production proof, however cleanly it verifies.
         """
         schema_version = self.validate_payload(proof_type, raw_payload)
+        self.validate_claims(raw_payload.get("claims"))
         canonical_bytes, digest_hex = self.canonicalize_and_hash(raw_payload)
         signature = self.sign_digest(digest_hex)
 
