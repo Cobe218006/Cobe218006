@@ -10,6 +10,27 @@ screen shows), and **COST** (whether you pay anything).
 > into any AI chat, website form or file you upload. The only places your IBM key
 > goes are the hidden prompt in Colab or Colab Secrets.
 
+> ℹ️ `master.html`'s CONFIG block already has five real evidence CIDs filled in.
+> Before relying on them, open each **Open (dweb.link)** link yourself and confirm
+> it loads your actual file — CIDs were typed in by hand and have not been
+> independently re-verified against the source files in this session.
+
+---
+
+## A note on third-party "quantum verification" tools
+
+If you've seen suggestions to run this through extra tools like **QWARD**,
+**QSimVerifier**, **QuantumD**, or **Skaden**: only **QWARD**
+(`pip install qiskit-qward`) is a real, publicly installable package — it's a
+Qiskit-ecosystem project for analyzing circuit/QPU execution quality, and you
+can add it as an extra check before Step 6 if you want (`!pip install -q
+qiskit-qward`, then inspect your transpiled circuit with it). **QSimVerifier**
+exists only as a single academic paper with no public code found. **QuantumD**
+and **Skaden** could not be confirmed to exist anywhere under those names.
+Don't build a dependency on a tool you can't find the source of. This
+protocol's own `quantum_hash.py` receipt check is the verification step that
+matters — it doesn't need any of these.
+
 ---
 
 ## Files in this folder
