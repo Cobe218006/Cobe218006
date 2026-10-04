@@ -11,6 +11,7 @@ httpx
 web3>=7
 pydantic
 google-auth  # server-side verification of Google Sign In ID tokens (/api/auth/google)
+py-solc-x    # compiles GenesisRegistryV2.sol for backend/deploy_contract.py
 
 # Tests
 pytest
