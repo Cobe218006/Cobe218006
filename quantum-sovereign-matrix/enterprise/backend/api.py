@@ -27,6 +27,8 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 from pydantic import BaseModel
 from web3 import Web3
 
@@ -180,4 +182,44 @@ def chain_verify(body: ChainVerifyRequest) -> JSONResponse:
         "expires_at": expires_at or None,
         "issuer": issuer,
         "status": STATUS_NAMES[status] if status < len(STATUS_NAMES) else str(status),
+    }))
+
+
+# ---------------------------------------------------------------------------
+# POST /api/auth/google
+#
+# master.html's Sign In decodes the Google ID token CLIENT-SIDE, without
+# checking its signature - that's explicitly labeled unverified there. This
+# endpoint is the real check: it fetches Google's current public keys and
+# verifies the token's signature, issuer, audience and expiry server-side,
+# the only way to actually trust the claims inside it.
+# ---------------------------------------------------------------------------
+
+class GoogleAuthRequest(BaseModel):
+    id_token: str
+
+
+@app.post("/api/auth/google")
+def auth_google(body: GoogleAuthRequest) -> JSONResponse:
+    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
+    if not client_id:
+        # Fail closed: without a known audience to check the token against,
+        # "verifying" it would mean trusting an attacker-chosen client ID.
+        return JSONResponse(status_code=503, content=err("GOOGLE_AUTH_NOT_CONFIGURED", "GOOGLE_OAUTH_CLIENT_ID is not set."))
+
+    try:
+        # Verifies: RS256 signature against Google's live JWKS, iss is
+        # accounts.google.com (or https:// variant), aud matches client_id,
+        # and the token is not expired. Raises ValueError on any failure.
+        claims = google_id_token.verify_oauth2_token(body.id_token, google_requests.Request(), client_id)
+    except ValueError as exc:
+        return JSONResponse(status_code=401, content=err("GOOGLE_TOKEN_INVALID", str(exc)))
+
+    return JSONResponse(content=ok({
+        "sub": claims["sub"],
+        "email": claims.get("email"),
+        "email_verified": claims.get("email_verified", False),
+        "name": claims.get("name"),
+        "picture": claims.get("picture"),
+        "verified_server_side": True,
     }))

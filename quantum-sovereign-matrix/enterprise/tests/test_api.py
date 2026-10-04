@@ -20,6 +20,11 @@ What's genuinely exercised here vs. what needs real external credentials:
   enterprise/README.md). If neither is available, these tests skip cleanly
   rather than failing, the same way the quantum tests don't require a real
   IBM account.
+- auth_google "fails closed" paths run against Google's REAL, live JWKS
+  endpoint (network required) — they prove a forged/unsigned token is
+  actually rejected by real signature verification, not a stub. There is no
+  test here for a genuinely valid Google-issued token: producing one needs
+  a real interactive OAuth sign-in this environment can't automate.
 """
 
 from __future__ import annotations
@@ -212,3 +217,44 @@ def test_chain_verify_reports_nonexistent_record(deployed_registry):
     data = resp.json()["data"]
     assert data["status"] == "NonExistent"
     assert data["is_valid"] is False
+
+
+# --- Google Sign In server-side verification --------------------------------
+# master.html decodes the ID token CLIENT-SIDE without checking its signature
+# (explicitly labeled unverified there). These tests exercise the real check.
+
+def _fake_jwt(payload: dict) -> str:
+    import base64
+    import json as _json
+
+    def b64url(obj: dict) -> str:
+        return base64.urlsafe_b64encode(_json.dumps(obj).encode()).rstrip(b"=").decode()
+
+    return b64url({"alg": "RS256", "typ": "JWT"}) + "." + b64url(payload) + ".garbage-signature"
+
+
+def test_google_auth_fails_closed_without_client_id(monkeypatch):
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
+    resp = client.post("/api/auth/google", json={"id_token": "whatever"})
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "GOOGLE_AUTH_NOT_CONFIGURED"
+
+
+def test_google_auth_rejects_malformed_token(monkeypatch):
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "fake-client-id.apps.googleusercontent.com")
+    resp = client.post("/api/auth/google", json={"id_token": "not.a.jwt"})
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "GOOGLE_TOKEN_INVALID"
+
+
+def test_google_auth_rejects_forged_token_against_real_google_jwks(monkeypatch):
+    """Not a stub: this hits Google's live JWKS endpoint and confirms a
+    well-shaped but unsigned token is still cryptographically rejected."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "fake-client-id.apps.googleusercontent.com")
+    forged = _fake_jwt({
+        "sub": "1234567890", "email": "nobody@example.com",
+        "iss": "https://accounts.google.com", "aud": "fake-client-id.apps.googleusercontent.com",
+    })
+    resp = client.post("/api/auth/google", json={"id_token": forged})
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "GOOGLE_TOKEN_INVALID"

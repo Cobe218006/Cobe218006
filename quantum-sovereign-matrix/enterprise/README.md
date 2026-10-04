@@ -22,6 +22,63 @@ consistently in Remix, your backend, and your frontend.
 `master.html`, `backend/proof_engine.py`, or anything else following this
 spec all verify the same way, in `public/verify.html` or anywhere else.
 
+## Sign In (Google)
+
+`../master.html` has an optional "Sign In" card for people without a crypto
+wallet. It is deliberately kept separate from two other things it is easy to
+conflate (see Update 7's key-identity model, which this already followed):
+
+- **Sovereign Wallet** — a MetaMask address, an on-chain account.
+- **Signing Key** — the secp256k1 key `master.html` generates to sign the
+  manifest.
+- **Sign In (Google)** — a self-reported human identity claim.
+
+None of the three proves the other two. A manifest's `payload.identity_claims`
+is populated independently of `payload.issuer` (the wallet) and
+`signature.public_key` (the signing key).
+
+**Set it up:**
+1. [console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials) → Create Credentials →
+   OAuth client ID → Web application.
+2. Under "Authorized JavaScript origins", add every gateway you expect people
+   to open `master.html` from, e.g. `https://dweb.link`, `https://ipfs.io`,
+   `https://gateway.pinata.cloud`. Google checks the **origin** only (scheme +
+   host + port), not the path — so this keeps working even though
+   `master.html`'s own URL changes every time you re-pin it to a new CID.
+3. Paste the resulting Client ID into `master.html`'s Links & Configuration
+   panel (`googleClientId`), and set the same value as `GOOGLE_OAUTH_CLIENT_ID`
+   in your backend's `.env` if you want server-side verification (below).
+
+**What "Signed in" means without a backend:** `master.html` decodes the
+Google ID token's claims directly in the browser — convenient, but it does
+**not** check Google's signature. This is stated plainly in the UI and in
+the manifest's `identity_claims.google.note` field. Anyone controlling the
+browser's JavaScript could fabricate a token-shaped payload the page would
+display; don't treat this alone as proof of who someone is.
+
+**What makes it a real verification:** `POST /api/auth/google` in
+`backend/api.py` fetches Google's live public keys and checks the token's
+RS256 signature, issuer, audience and expiry server-side via the official
+`google-auth` library. It fails closed with `GOOGLE_AUTH_NOT_CONFIGURED` if
+`GOOGLE_OAUTH_CLIENT_ID` isn't set (never verifies against an attacker-chosen
+audience), and with `GOOGLE_TOKEN_INVALID` on anything forged or expired —
+confirmed in `tests/test_api.py` against Google's actual JWKS endpoint, not a
+stub, by submitting a well-shaped-but-unsigned token and watching real
+signature verification reject it.
+
+Not built here: wiring `master.html`'s Sign In button to actually call
+`/api/auth/google` and upgrade `identity_claims.google.verified_server_side`
+to `true` on success — that's a small addition once you have a backend
+deployed and reachable from wherever `master.html` is hosted; the endpoint
+itself is ready and tested.
+
+Apple Sign In was considered and left out: it requires a Services ID, a
+registered **verified domain** (a `apple-developer-domain-association.txt`
+file hosted at a fixed domain you control), and a paid Apple Developer
+account — none of which fits a plain IPFS-hosted file the way Google's
+origin-only check does. It's a reasonable addition later if you put
+`master.html` behind your own domain.
+
 ## Protocol (v2), end to end
 
 ```

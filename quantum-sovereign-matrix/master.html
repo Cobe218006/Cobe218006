@@ -108,6 +108,19 @@
     <div class="out" id="walletOut">Not connected</div>
   </section>
 
+  <!-- 2b. SSO IDENTITY (separate from the wallet and signing key — see note below) -->
+  <section>
+    <h2>Sign In</h2>
+    <p class="muted">Optional, for people without a crypto wallet. This is a self-reported identity claim from
+      Google, shown as-is and <strong>not independently verified in the browser</strong> &mdash; a real signature
+      check needs a backend (see <code>enterprise/backend/api.py</code>'s <code>/api/auth/google</code>). It is a
+      separate concept from your Sovereign Wallet (an on-chain account) and your Signing Key below (a
+      cryptographic key) &mdash; none of the three proves the others.</p>
+    <div id="googleBtnContainer"></div>
+    <div class="row" style="margin-top:8px"><button type="button" id="btnSignOutGoogle" class="secondary">Sign Out</button></div>
+    <div class="out" id="ssoOut">Not signed in. Set a Google Client ID in Links &amp; Configuration to enable this.</div>
+  </section>
+
   <!-- 3. QUANTUM HASH -->
   <section>
     <h2>Quantum Verification</h2>
@@ -202,7 +215,8 @@ const CONFIG = {
   links: {
     verifierCid: "",      // CID of enterprise/public/verify.html after you pin it
     rpcUrl: "",            // JSON-RPC URL for the chain you anchored on
-    contractAddress: ""    // deployed GenesisRegistryV2 address
+    contractAddress: "",   // deployed GenesisRegistryV2 address
+    googleClientId: ""     // OAuth Client ID from Google Cloud Console, for Sign In (see DEPLOYMENT.md)
   },
 
   // >>> PASTE YOUR QUANTUM RESULT HERE (from qiskit_ghz.py output) <<<
@@ -237,7 +251,7 @@ const CONFIG = {
   const HEX64_RE = /^[0-9a-f]{64}$/;
 
   const state = { account: null, chainId: null, secretKey: null, publicKeyHex: null, keyFingerprint: null,
-                  quantumHash: null, assessment: null, lastManifest: null };
+                  quantumHash: null, assessment: null, lastManifest: null, googleIdentity: null };
 
   const $ = (id) => document.getElementById(id);
   const enc = new TextEncoder();
@@ -388,6 +402,85 @@ const CONFIG = {
     window.ethereum.on("chainChanged", (c) => { state.chainId = c; renderWallet(); });
   }
 
+  /* ---------- 2b. Sign In (Google, client-side only — see the Sign In card for
+   * what this does and does not prove). Loaded lazily so a page that never
+   * uses it never pays for the extra script. ---------- */
+  let _googleLoaded = null;
+  function loadGoogleIdentityServices() {
+    if (_googleLoaded) return _googleLoaded;
+    _googleLoaded = new Promise((resolve, reject) => {
+      if (window.google && window.google.accounts && window.google.accounts.id) return resolve(window.google);
+      const script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true; script.defer = true;
+      script.onload = () => resolve(window.google);
+      script.onerror = () => reject(new Error("Could not load accounts.google.com/gsi/client (check your connection)."));
+      document.head.appendChild(script);
+    });
+    return _googleLoaded;
+  }
+  function decodeJwtPayloadUnverified(jwt) {
+    // Client-side convenience only: reads the token's claims without checking
+    // Google's signature. That check needs a backend — see /api/auth/google
+    // in enterprise/backend/api.py. Never treat this as a verified identity.
+    const part = jwt.split(".")[1];
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const json = decodeURIComponent(atob(b64).split("").map((c) =>
+      "%" + c.charCodeAt(0).toString(16).padStart(2, "0")).join(""));
+    return JSON.parse(json);
+  }
+  function renderSignIn() {
+    const out = $("ssoOut");
+    if (!state.googleIdentity) {
+      setOut(out, "Not signed in. Set a Google Client ID in Links & Configuration to enable this.");
+      return;
+    }
+    const g = state.googleIdentity;
+    setOut(out,
+      "Signed in as: " + (g.name || g.email || g.sub) + (g.email ? " <" + g.email + ">" : "") +
+      "\nGoogle subject (sub): " + g.sub +
+      "\n\n⚠ Client-side only — this is an unverified, self-reported claim. It has NOT been checked against" +
+      " Google's signature. Do not treat it as proof of identity unless you verify the ID token server-side.",
+      "ok");
+  }
+  async function initGoogleSignIn() {
+    const clientId = String(cfg().links.googleClientId || "").trim();
+    const container = $("googleBtnContainer");
+    container.textContent = "";
+    if (!clientId) { renderSignIn(); return; }
+    if (!/\.apps\.googleusercontent\.com$/.test(clientId)) {
+      setOut($("ssoOut"), "The configured Google Client ID doesn't look right (should end with .apps.googleusercontent.com). Fix it in Links & Configuration.", "bad");
+      return;
+    }
+    try {
+      const google = await loadGoogleIdentityServices();
+      google.accounts.id.initialize({
+        client_id: clientId,
+        callback: (response) => {
+          try {
+            const claims = decodeJwtPayloadUnverified(response.credential);
+            state.googleIdentity = {
+              sub: claims.sub, email: claims.email, name: claims.name, picture: claims.picture,
+              idToken: response.credential, verifiedServerSide: false
+            };
+            renderSignIn();
+          } catch (err) {
+            setOut($("ssoOut"), "Could not read the sign-in response: " + (err && err.message || err), "bad");
+          }
+        }
+      });
+      google.accounts.id.renderButton(container, { theme: "outline", size: "large", width: 280 });
+      renderSignIn();
+    } catch (err) {
+      setOut($("ssoOut"), "Sign In unavailable: " + (err && err.message || err), "bad");
+    }
+  }
+  function signOutGoogle() {
+    state.googleIdentity = null;
+    try { window.google && window.google.accounts.id.disableAutoSelect(); } catch (_) {}
+    renderSignIn();
+  }
+
   /* ---------- 3. quantum hash ---------- */
   function renderHash() {
     const out = $("hashOut");
@@ -485,6 +578,19 @@ const CONFIG = {
         wallet: state.account,
         chain_id: state.chainId ? parseInt(state.chainId, 16) : null
       },
+      // Deliberately separate from `issuer` (wallet) and `signature.public_key`
+      // (signing key) — a wallet address, a signing key, and an SSO identity
+      // are three different things and none of them proves the others.
+      identity_claims: state.googleIdentity ? {
+        google: {
+          sub: state.googleIdentity.sub,
+          email: state.googleIdentity.email || null,
+          name: state.googleIdentity.name || null,
+          verified_server_side: false,
+          note: "Self-reported, decoded client-side from the ID token without checking Google's signature. " +
+                "Not independently verified — see enterprise/backend/api.py's /api/auth/google for real verification."
+        }
+      } : null,
       evidence: c.evidence.map((e) => {
         const cid = String(e.cid || "").trim();
         const ok = isCid(cid);
@@ -620,7 +726,8 @@ const CONFIG = {
       { key: "q:sha256", label: "Quantum hash (SHA-256)", value: isSet(c.quantum.sha256) ? c.quantum.sha256 : "" },
       { key: "link:verifierCid", label: "Zero-Trust Verifier CID (verify.html on Pinata)", value: c.links.verifierCid || "" },
       { key: "link:rpcUrl", label: "RPC URL (for the verifier's on-chain check)", value: c.links.rpcUrl || "" },
-      { key: "link:contractAddress", label: "GenesisRegistryV2 contract address", value: c.links.contractAddress || "" }
+      { key: "link:contractAddress", label: "GenesisRegistryV2 contract address", value: c.links.contractAddress || "" },
+      { key: "link:googleClientId", label: "Google OAuth Client ID (for Sign In)", value: c.links.googleClientId || "" }
     ];
   };
   function renderSetup() {
@@ -647,6 +754,7 @@ const CONFIG = {
           if (field === "verifierCid" && !isCid(v)) problems.push("Verifier CID looks wrong");
           if (field === "rpcUrl" && !/^https?:\/\//i.test(v)) problems.push("RPC URL should start with http:// or https://");
           if (field === "contractAddress" && !/^0x[0-9a-fA-F]{40}$/.test(v)) problems.push("Contract address should be a 0x-prefixed 40-hex-character address");
+          if (field === "googleClientId" && !/\.apps\.googleusercontent\.com$/.test(v)) problems.push("Google Client ID should end with .apps.googleusercontent.com");
           o.links[field] = v;
         }
       }
@@ -654,12 +762,14 @@ const CONFIG = {
     if (o.quantum.sha256 && !HEX64_RE.test(o.quantum.sha256)) problems.push("Quantum hash must be 64 hex characters");
     const saved = saveOverrides(o);
     renderEvidence(); renderHash(); state.lastManifest = null;
+    initGoogleSignIn();
     setOut($("setupOut"), (saved ? "Saved on this device." : "Could not save (private browsing?). Values apply until reload.") +
            (problems.length ? "\n⚠ " + problems.join("\n⚠ ") : ""), problems.length || !saved ? "bad" : "ok");
   }
   function resetSetup() {
     try { localStorage.removeItem(STORE_KEY); } catch (_) {}
     renderSetup(); renderEvidence(); renderHash(); state.lastManifest = null;
+    initGoogleSignIn();
     setOut($("setupOut"), "Reset to the values in the file.", "ok");
   }
 
@@ -693,10 +803,12 @@ const CONFIG = {
   $("btnSave").addEventListener("click", saveSetup);
   $("btnReset").addEventListener("click", resetSetup);
   $("btnCopyVerifierLink").addEventListener("click", copyVerifierLink);
+  $("btnSignOutGoogle").addEventListener("click", signOutGoogle);
 
   const q0 = cfg().quantum.distribution;
   if (q0) $("qOutput").value = q0;
   renderEvidence(); renderHash(); renderSetup();
+  initGoogleSignIn();
 })();
 </script>
 </body>

@@ -10,6 +10,7 @@ uvicorn[standard]
 httpx
 web3>=7
 pydantic
+google-auth  # server-side verification of Google Sign In ID tokens (/api/auth/google)
 
 # Tests
 pytest
