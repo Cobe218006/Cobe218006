@@ -1,0 +1,75 @@
+{
+  "schema": "quantum-sovereign-matrix/manifest@1",
+  "name": "Quantum Sovereign Matrix",
+  "version": "1.0.0",
+  "created_at": "2026-01-01T00:00:00.000Z",
+  "issuer": {
+    "wallet": "0xYOUR_WALLET_ADDRESS",
+    "chain_id": 11155111
+  },
+  "evidence": [
+    {
+      "id": "covenant",
+      "title": "Covenant",
+      "media_type": "text/html",
+      "cid": "PASTE_COVENANT_CID_HERE",
+      "uri": "ipfs://PASTE_COVENANT_CID_HERE",
+      "gateway_url": "https://dweb.link/ipfs/PASTE_COVENANT_CID_HERE"
+    },
+    {
+      "id": "decree",
+      "title": "Ecclesiastical Decree",
+      "media_type": "application/pdf",
+      "cid": "PASTE_DECREE_CID_HERE",
+      "uri": "ipfs://PASTE_DECREE_CID_HERE",
+      "gateway_url": "https://dweb.link/ipfs/PASTE_DECREE_CID_HERE"
+    },
+    {
+      "id": "ladderborn",
+      "title": "Book of the Ladderborn Dominion",
+      "media_type": "application/pdf",
+      "cid": "PASTE_LADDERBORN_CID_HERE",
+      "uri": "ipfs://PASTE_LADDERBORN_CID_HERE",
+      "gateway_url": "https://dweb.link/ipfs/PASTE_LADDERBORN_CID_HERE"
+    },
+    {
+      "id": "ancient_dams",
+      "title": "Ancient Dams",
+      "media_type": "application/geo+json",
+      "cid": "PASTE_ANCIENT_DAMS_CID_HERE",
+      "uri": "ipfs://PASTE_ANCIENT_DAMS_CID_HERE",
+      "gateway_url": "https://dweb.link/ipfs/PASTE_ANCIENT_DAMS_CID_HERE"
+    },
+    {
+      "id": "affidavit",
+      "title": "Affidavit of Covenant",
+      "media_type": "application/pdf",
+      "cid": "PASTE_AFFIDAVIT_CID_HERE",
+      "uri": "ipfs://PASTE_AFFIDAVIT_CID_HERE",
+      "gateway_url": "https://dweb.link/ipfs/PASTE_AFFIDAVIT_CID_HERE"
+    }
+  ],
+  "master_control_center": {
+    "cid": "PASTE_MASTER_HTML_CID_HERE",
+    "uri": "ipfs://PASTE_MASTER_HTML_CID_HERE",
+    "gateway_url": "https://dweb.link/ipfs/PASTE_MASTER_HTML_CID_HERE"
+  },
+  "quantum_verification": {
+    "provider": "IBM Quantum (Open Plan)",
+    "backend": "PASTE_BACKEND_NAME_HERE",
+    "job_id": "PASTE_JOB_ID_HERE",
+    "shots": 1024,
+    "circuit": "GHZ-5 (H q0, CNOT chain q0->q4, measure all)",
+    "distribution": "PASTE_QUANTUM_OUTPUT_STRING_HERE",
+    "hash_algorithm": "SHA-256 over the exact UTF-8 bytes of 'distribution'",
+    "sha256": "PASTE_QUANTUM_HASH_HERE"
+  },
+  "divinity_assessment": {
+    "score": 0,
+    "max": 100,
+    "threshold": 81,
+    "aligned": false,
+    "assessed_at": "2026-01-01T00:00:00.000Z"
+  },
+  "signature": null
+}

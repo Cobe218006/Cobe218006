@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0a08">
+<title>Master Control Center</title>
+<style>
+  :root {
+    --bg: #0b0a08;
+    --panel: #15130e;
+    --panel-2: #1d1a12;
+    --line: #3a3220;
+    --gold: #d4af37;
+    --gold-hi: #f1d27a;
+    --gold-lo: #8a6d1e;
+    --text: #f3e9c6;
+    --muted: #a99d7a;
+    --ok: #7fd18b;
+    --bad: #ff8a7a;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 50% -200px, #2a2210 0%, var(--bg) 60%) fixed, var(--bg);
+    color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    padding: env(safe-area-inset-top) 16px calc(32px + env(safe-area-inset-bottom));
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  header { text-align: center; padding: 28px 0 12px; }
+  header h1 {
+    margin: 0; font-size: 26px; letter-spacing: .08em; text-transform: uppercase;
+    background: linear-gradient(180deg, var(--gold-hi), var(--gold) 55%, var(--gold-lo));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  header p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+  section {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px; margin: 16px 0;
+    box-shadow: 0 0 0 1px rgba(212,175,55,.04), 0 8px 24px rgba(0,0,0,.35);
+  }
+  h2 { margin: 0 0 12px; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; color: var(--gold); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; }
+  button {
+    -webkit-appearance: none; appearance: none; touch-action: manipulation;
+    font: inherit; font-weight: 600; color: #1a1406; cursor: pointer;
+    min-height: 48px; padding: 12px 18px; border-radius: 12px; border: 1px solid var(--gold-lo);
+    background: linear-gradient(180deg, var(--gold-hi), var(--gold) 60%, #b8921f);
+    flex: 1 1 200px;
+  }
+  button.secondary { background: transparent; color: var(--gold); border-color: var(--gold-lo); }
+  button:active { transform: translateY(1px); filter: brightness(.95); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .out {
+    margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: #0f0d09; border: 1px dashed var(--line);
+    font: 13px/1.45 ui-monospace, "SF Mono", Menlo, monospace; word-break: break-all; color: var(--text);
+    min-height: 1.45em; white-space: pre-wrap; max-height: 60vh; overflow: auto; -webkit-overflow-scrolling: touch;
+  }
+  .muted { color: var(--muted); font-size: 14px; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  ol.evidence { list-style: none; margin: 0; padding: 0; counter-reset: ev; }
+  ol.evidence li { counter-increment: ev; border-top: 1px solid var(--line); padding: 12px 0; }
+  ol.evidence li:first-child { border-top: 0; padding-top: 0; }
+  ol.evidence .title::before { content: counter(ev) ". "; color: var(--gold); }
+  ol.evidence .title { font-weight: 600; }
+  ol.evidence .cid { font: 12px ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); word-break: break-all; }
+  a { color: var(--gold-hi); }
+  .links a { display: inline-block; margin: 6px 14px 0 0; padding: 6px 0; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  input, textarea {
+    width: 100%; font: 16px ui-monospace, "SF Mono", Menlo, monospace; /* 16px stops iOS zoom-on-focus */
+    color: var(--text); background: #0f0d09; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  }
+  textarea { min-height: 84px; resize: vertical; }
+  details summary { cursor: pointer; color: var(--gold); font-weight: 600; padding: 4px 0; }
+  .score { font-size: 40px; font-weight: 700; text-align: center; color: var(--gold-hi); margin: 6px 0 0; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Master Control Center</h1>
+    <p>Quantum Sovereign Matrix &middot; Sovereign Evidence</p>
+  </header>
+
+  <!-- 1. EVIDENCE FOLDER -->
+  <section>
+    <h2>Evidence Folder</h2>
+    <ol class="evidence" id="evidenceList"></ol>
+  </section>
+
+  <!-- 2. WALLET -->
+  <section>
+    <h2>Sovereign Wallet</h2>
+    <div class="row"><button type="button" id="btnWallet">Connect Sovereign Wallet</button></div>
+    <div class="out" id="walletOut">Not connected</div>
+  </section>
+
+  <!-- 3. QUANTUM HASH -->
+  <section>
+    <h2>Quantum Verification</h2>
+    <label for="qOutput">Quantum output (paste the one-line string printed under QUANTUM OUTPUT)</label>
+    <textarea id="qOutput" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder='{"00000":0.4980,"11111":0.5020}'></textarea>
+    <div class="row" style="margin-top:10px">
+      <button type="button" id="btnHash">Hash Quantum Output</button>
+      <button type="button" id="btnCopyHash" class="secondary">Copy Quantum Hash</button>
+    </div>
+    <div class="out" id="hashOut"></div>
+  </section>
+
+  <!-- 4. KEY -->
+  <section>
+    <h2>Quantum Key</h2>
+    <p class="muted">ECDSA P-256 signing key made on this device. It signs the manifest you download.
+      The private key never leaves the browser and is forgotten when the page reloads.
+      (P-256 is classical cryptography, not post-quantum.)</p>
+    <div class="row"><button type="button" id="btnKey">Generate Quantum Key</button></div>
+    <div class="out" id="keyOut">No key yet</div>
+  </section>
+
+  <!-- 5. DIVINITY ASSESSMENT -->
+  <section>
+    <h2>Divinity Assessment</h2>
+    <p class="muted">Five weighted questions, each answered 1&ndash;5. Acceptable alignment: <span id="thresholdLbl"></span>% or higher.</p>
+    <div class="row"><button type="button" id="btnAssess">Run Divinity Assessment</button></div>
+    <div class="score" id="scoreOut">&mdash;</div>
+    <div class="out" id="assessOut">Not assessed</div>
+  </section>
+
+  <!-- 6. MANIFEST -->
+  <section>
+    <h2>Manifest</h2>
+    <div class="row">
+      <button type="button" id="btnManifest">Download Manifest</button>
+      <button type="button" id="btnCopyManifest" class="secondary">Copy Manifest JSON</button>
+    </div>
+    <div class="out" id="manifestOut">Manifest_Sovereign.json will appear here.</div>
+  </section>
+
+  <!-- 7. SETUP (on-device editing, no HTML editing needed) -->
+  <section>
+    <h2>Setup</h2>
+    <details>
+      <summary>Edit CIDs &amp; quantum record on this device</summary>
+      <p class="muted">Values typed here are saved in this browser only. To make them permanent for everyone,
+        put them in the CONFIG block inside this file before uploading it to Pinata.</p>
+      <div id="setupFields"></div>
+      <div class="row" style="margin-top:12px">
+        <button type="button" id="btnSave">Save</button>
+        <button type="button" id="btnReset" class="secondary">Reset to file values</button>
+      </div>
+      <div class="out" id="setupOut"></div>
+    </details>
+  </section>
+
+  <footer>Runs fully in your browser. No server, no tracking.</footer>
+</main>
+
+<script>
+/* =====================================================================
+ * CONFIG  —  EDIT THIS BLOCK, THEN UPLOAD THE FILE TO PINATA
+ * ===================================================================== */
+const CONFIG = {
+  manifestName: "Quantum Sovereign Matrix",
+  manifestVersion: "1.0.0",
+
+  // Your five evidence CIDs (start with "Qm..." or "bafy...").
+  evidence: [
+    { id: "covenant",     title: "Covenant",                        type: "text/html",            cid: "PASTE_COVENANT_CID_HERE" },
+    { id: "decree",       title: "Ecclesiastical Decree",           type: "application/pdf",      cid: "PASTE_DECREE_CID_HERE" },
+    { id: "ladderborn",   title: "Book of the Ladderborn Dominion", type: "application/pdf",      cid: "PASTE_LADDERBORN_CID_HERE" },
+    { id: "ancient_dams", title: "Ancient Dams",                    type: "application/geo+json", cid: "PASTE_ANCIENT_DAMS_CID_HERE" },
+    { id: "affidavit",    title: "Affidavit of Covenant",           type: "application/pdf",      cid: "PASTE_AFFIDAVIT_CID_HERE" }
+  ],
+
+  // CID of THIS master.html after you upload it to Pinata (fill in afterwards, via Setup).
+  masterControlCenterCid: "",
+
+  // >>> PASTE YOUR QUANTUM RESULT HERE (from qiskit_ghz.py output) <<<
+  quantum: {
+    provider: "IBM Quantum (Open Plan)",
+    backend: "PASTE_BACKEND_NAME_HERE",   // e.g. "ibm_brisbane"
+    job_id: "PASTE_JOB_ID_HERE",
+    shots: 1024,
+    distribution: "",                     // e.g. {"00000":0.4980,"11111":0.5020}
+    sha256: "PASTE_QUANTUM_HASH_HERE"
+  },
+
+  assessment: {
+    threshold: 81,
+    // weights must add up to 100
+    questions: [
+      { weight: 25, text: "Truth: is every evidence file exactly as you originally sealed it?" },
+      { weight: 20, text: "Custody: are your private keys and seed phrase kept offline and unshared?" },
+      { weight: 20, text: "Covenant: are you acting in line with the Covenant and Affidavit you published?" },
+      { weight: 20, text: "Stewardship: are land and water (the Ancient Dams) being cared for responsibly?" },
+      { weight: 15, text: "Service: does this work serve others and not only yourself?" }
+    ]
+  }
+};
+/* ===================== END OF CONFIG ===================== */
+
+(function () {
+  "use strict";
+
+  const STORE_KEY = "qsm.overrides.v1";
+  const CID_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/;
+  const HEX64_RE = /^[0-9a-f]{64}$/;
+
+  const state = { account: null, chainId: null, keyPair: null, publicJwk: null, keyFingerprint: null,
+                  quantumHash: null, assessment: null, lastManifest: null };
+
+  const $ = (id) => document.getElementById(id);
+  const enc = new TextEncoder();
+
+  /* ---------- storage (fails safe in private mode) ---------- */
+  function loadOverrides() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}") || {}; } catch (_) { return {}; }
+  }
+  function saveOverrides(o) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(o)); return true; } catch (_) { return false; }
+  }
+  function cfg() {
+    const o = loadOverrides();
+    const evidence = CONFIG.evidence.map((e) => Object.assign({}, e, o.cids && o.cids[e.id] ? { cid: o.cids[e.id] } : {}));
+    return {
+      evidence,
+      masterControlCenterCid: o.masterControlCenterCid != null ? o.masterControlCenterCid : CONFIG.masterControlCenterCid,
+      quantum: Object.assign({}, CONFIG.quantum, o.quantum || {})
+    };
+  }
+
+  /* ---------- helpers ---------- */
+  const isCid = (c) => CID_RE.test(String(c || "").trim());
+  const isSet = (v) => v && !/^PASTE_/.test(String(v));
+  const bufToHex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+  function bufToB64(buf) {
+    let s = ""; new Uint8Array(buf).forEach((b) => { s += String.fromCharCode(b); }); return btoa(s);
+  }
+  async function sha256Hex(text) {
+    return bufToHex(await crypto.subtle.digest("SHA-256", enc.encode(text)));
+  }
+  function setOut(el, text, cls) {
+    el.textContent = text; el.classList.remove("ok", "bad"); if (cls) el.classList.add(cls);
+  }
+  function needsCrypto(el) {
+    if (window.crypto && crypto.subtle) return false;
+    setOut(el, "Web Crypto is unavailable. Open this page over https:// (e.g. an IPFS gateway link), not as a local file.", "bad");
+    return true;
+  }
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+    } catch (_) { /* fall through */ }
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.top = "-1000px";
+    document.body.appendChild(ta);
+    const range = document.createRange(); range.selectNodeContents(ta);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    ta.setSelectionRange(0, text.length);
+    let ok = false; try { ok = document.execCommand("copy"); } catch (_) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  /* ---------- 1. evidence folder ---------- */
+  function renderEvidence() {
+    const list = $("evidenceList"); list.textContent = "";
+    cfg().evidence.forEach((e) => {
+      const li = document.createElement("li");
+      const t = document.createElement("div"); t.className = "title"; t.textContent = e.title; li.appendChild(t);
+      const c = document.createElement("div"); c.className = "cid"; li.appendChild(c);
+      const links = document.createElement("div"); links.className = "links"; li.appendChild(links);
+      const cid = String(e.cid || "").trim();
+      if (isCid(cid)) {
+        c.textContent = cid;
+        [["Open (dweb.link)", "https://dweb.link/ipfs/" + cid],
+         ["Backup (ipfs.io)", "https://ipfs.io/ipfs/" + cid]].forEach(([label, href]) => {
+          const a = document.createElement("a");
+          a.href = href; a.textContent = label; a.target = "_blank"; a.rel = "noopener noreferrer";
+          links.appendChild(a);
+        });
+      } else {
+        c.textContent = "CID not set yet — add it in CONFIG or Setup below.";
+        c.classList.add("bad");
+      }
+      list.appendChild(li);
+    });
+  }
+
+  /* ---------- 2. wallet ---------- */
+  function renderWallet() {
+    if (!state.account) return;
+    const chain = state.chainId ? " · chain " + parseInt(state.chainId, 16) : "";
+    setOut($("walletOut"), "Connected: " + state.account + chain, "ok");
+    $("btnWallet").textContent = "Wallet Connected";
+  }
+  async function connectWallet() {
+    const out = $("walletOut");
+    if (!window.ethereum) {
+      const target = location.host + location.pathname;
+      out.textContent = "";
+      out.classList.add("bad");
+      out.append("No wallet found. On iPhone, open this page inside the MetaMask app's browser: ");
+      if (location.protocol === "https:") {
+        const a = document.createElement("a");
+        a.href = "https://metamask.app.link/dapp/" + target; a.textContent = "Open in MetaMask";
+        out.appendChild(a);
+      }
+      return;
+    }
+    try {
+      setOut(out, "Approve the request in MetaMask…");
+      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      state.account = accounts && accounts[0] ? accounts[0] : null;
+      try { state.chainId = await window.ethereum.request({ method: "eth_chainId" }); } catch (_) { state.chainId = null; }
+      if (!state.account) return setOut(out, "No account returned.", "bad");
+      renderWallet();
+    } catch (err) {
+      setOut(out, err && err.code === 4001 ? "Request rejected in wallet." : "Wallet error: " + (err && err.message || err), "bad");
+    }
+  }
+  if (window.ethereum && window.ethereum.on) {
+    window.ethereum.on("accountsChanged", (a) => { state.account = a[0] || null; state.account ? renderWallet() : setOut($("walletOut"), "Not connected"); });
+    window.ethereum.on("chainChanged", (c) => { state.chainId = c; renderWallet(); });
+  }
+
+  /* ---------- 3. quantum hash ---------- */
+  function renderHash() {
+    const out = $("hashOut");
+    const expected = String(cfg().quantum.sha256 || "").toLowerCase();
+    if (!state.quantumHash) {
+      if (HEX64_RE.test(expected)) setOut(out, "Recorded hash: " + expected);
+      else setOut(out, "No hash yet. Paste the quantum output above and tap Hash.");
+      return;
+    }
+    let msg = "SHA-256: " + state.quantumHash, cls = "ok";
+    if (HEX64_RE.test(expected)) {
+      if (expected === state.quantumHash) msg += "\nMATCHES the recorded quantum hash ✓";
+      else { msg += "\nDOES NOT MATCH the recorded hash:\n" + expected; cls = "bad"; }
+    }
+    setOut(out, msg, cls);
+  }
+  async function hashQuantum() {
+    const out = $("hashOut");
+    if (needsCrypto(out)) return;
+    const text = $("qOutput").value.trim();
+    if (!text) return setOut(out, "Paste the quantum output first.", "bad");
+    state.quantumHash = await sha256Hex(text);
+    renderHash();
+  }
+  async function copyHash() {
+    const h = state.quantumHash || (HEX64_RE.test(String(cfg().quantum.sha256).toLowerCase()) ? String(cfg().quantum.sha256).toLowerCase() : null);
+    if (!h) return setOut($("hashOut"), "Nothing to copy yet — tap Hash Quantum Output first.", "bad");
+    const ok = await copyText(h);
+    setOut($("hashOut"), ok ? "Copied to clipboard:\n" + h : "Copy blocked — press and hold to select:\n" + h, ok ? "ok" : "bad");
+  }
+
+  /* ---------- 4. key ---------- */
+  async function generateKey() {
+    const out = $("keyOut");
+    if (needsCrypto(out)) return;
+    try {
+      state.keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+      const jwk = await crypto.subtle.exportKey("jwk", state.keyPair.publicKey);
+      state.publicJwk = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y };
+      const raw = await crypto.subtle.exportKey("raw", state.keyPair.publicKey);
+      state.keyFingerprint = bufToHex(await crypto.subtle.digest("SHA-256", raw));
+      setOut(out, "ECDSA P-256 key ready.\nPublic key fingerprint (SHA-256):\n" + state.keyFingerprint, "ok");
+    } catch (err) {
+      setOut(out, "Key generation failed: " + (err && err.message || err), "bad");
+    }
+  }
+
+  /* ---------- 5. assessment ---------- */
+  function runAssessment() {
+    const qs = CONFIG.assessment.questions;
+    const totalWeight = qs.reduce((s, q) => s + q.weight, 0);
+    const answers = [];
+    for (let i = 0; i < qs.length; i++) {
+      let val = null;
+      while (val === null) {
+        const raw = window.prompt("Question " + (i + 1) + " of " + qs.length + " (weight " + qs[i].weight + ")\n\n" +
+                                  qs[i].text + "\n\nAnswer 1 (not at all) to 5 (fully):", "");
+        if (raw === null) { setOut($("assessOut"), "Assessment cancelled."); return; }
+        const n = Number(String(raw).trim());
+        if (Number.isInteger(n) && n >= 1 && n <= 5) val = n;
+        else window.alert("Please enter a whole number from 1 to 5.");
+      }
+      answers.push(val);
+    }
+    const score = Math.round(qs.reduce((s, q, i) => s + q.weight * (answers[i] - 1) / 4, 0) * 100 / totalWeight);
+    const aligned = score >= CONFIG.assessment.threshold;
+    state.assessment = {
+      score, max: 100, threshold: CONFIG.assessment.threshold, aligned,
+      answers: qs.map((q, i) => ({ question: q.text, weight: q.weight, answer: answers[i] })),
+      assessed_at: new Date().toISOString()
+    };
+    $("scoreOut").textContent = score + " / 100";
+    setOut($("assessOut"), aligned ? "Acceptable alignment (≥ " + CONFIG.assessment.threshold + "%)."
+                                   : "Below the " + CONFIG.assessment.threshold + "% alignment threshold.", aligned ? "ok" : "bad");
+  }
+
+  /* ---------- 6. manifest ---------- */
+  async function buildManifest() {
+    const c = cfg();
+    const q = c.quantum;
+    const manifest = {
+      schema: "quantum-sovereign-matrix/manifest@1",
+      name: CONFIG.manifestName,
+      version: CONFIG.manifestVersion,
+      created_at: new Date().toISOString(),
+      issuer: {
+        wallet: state.account,
+        chain_id: state.chainId ? parseInt(state.chainId, 16) : null
+      },
+      evidence: c.evidence.map((e) => {
+        const cid = String(e.cid || "").trim();
+        const ok = isCid(cid);
+        return {
+          id: e.id, title: e.title, media_type: e.type,
+          cid: ok ? cid : null,
+          uri: ok ? "ipfs://" + cid : null,
+          gateway_url: ok ? "https://dweb.link/ipfs/" + cid : null
+        };
+      }),
+      master_control_center: (function () {
+        const cid = String(c.masterControlCenterCid || "").trim();
+        return isCid(cid) ? { cid, uri: "ipfs://" + cid, gateway_url: "https://dweb.link/ipfs/" + cid }
+                          : { cid: null, uri: null, gateway_url: null };
+      })(),
+      quantum_verification: {
+        provider: q.provider || null,
+        backend: isSet(q.backend) ? q.backend : null,
+        job_id: isSet(q.job_id) ? q.job_id : null,
+        shots: Number(q.shots) || null,
+        circuit: "GHZ-5 (H q0, CNOT chain q0->q4, measure all)",
+        distribution: q.distribution || ($("qOutput").value.trim() || null),
+        hash_algorithm: "SHA-256 over the exact UTF-8 bytes of 'distribution'",
+        sha256: HEX64_RE.test(String(q.sha256).toLowerCase()) ? String(q.sha256).toLowerCase() : (state.quantumHash || null)
+      },
+      divinity_assessment: state.assessment
+        ? { score: state.assessment.score, max: 100, threshold: state.assessment.threshold,
+            aligned: state.assessment.aligned, assessed_at: state.assessment.assessed_at }
+        : null,
+      signature: null
+    };
+
+    if (state.keyPair) {
+      const unsigned = Object.assign({}, manifest); delete unsigned.signature;
+      const payload = JSON.stringify(unsigned);
+      const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, state.keyPair.privateKey, enc.encode(payload));
+      manifest.signature = {
+        algorithm: "ECDSA-P256-SHA256 (IEEE P1363 r||s)",
+        covers: "JSON.stringify(manifest without the 'signature' field)",
+        payload_sha256: await sha256Hex(payload),
+        public_key_jwk: state.publicJwk,
+        public_key_fingerprint_sha256: state.keyFingerprint,
+        value_base64: bufToB64(sig)
+      };
+    }
+    return manifest;
+  }
+  function manifestWarnings(m) {
+    const w = [];
+    const missing = m.evidence.filter((e) => !e.cid).map((e) => e.title);
+    if (missing.length) w.push("Missing CIDs: " + missing.join(", "));
+    if (!m.quantum_verification.sha256) w.push("No quantum hash");
+    if (!m.quantum_verification.job_id) w.push("No IBM job ID");
+    if (!m.issuer.wallet) w.push("Wallet not connected");
+    if (!m.signature) w.push("Unsigned (generate a key first to sign)");
+    return w;
+  }
+  async function downloadManifest() {
+    const out = $("manifestOut");
+    if (needsCrypto(out)) return;
+    try {
+      const m = await buildManifest();
+      const text = JSON.stringify(m, null, 2) + "\n";
+      JSON.parse(text); // guarantee structurally valid JSON before offering it
+      state.lastManifest = text;
+      const fileSha = await sha256Hex(text);
+
+      let delivered = false;
+      const blob = new Blob([text], { type: "application/json" });
+      // iOS: the share sheet gives "Save to Files"; in-app wallet browsers often block plain downloads.
+      try {
+        const file = new File([blob], "Manifest_Sovereign.json", { type: "application/json" });
+        if (navigator.canShare && navigator.canShare({ files: [file] }) && !window.ethereum) {
+          await navigator.share({ files: [file], title: "Manifest_Sovereign.json" });
+          delivered = true;
+        }
+      } catch (err) { if (err && err.name === "AbortError") delivered = true; }
+      if (!delivered) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = "Manifest_Sovereign.json"; a.rel = "noopener";
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      }
+
+      const warn = manifestWarnings(m);
+      setOut(out,
+        "File SHA-256 (use as bytes32 in Remix):\n0x" + fileSha + "\n\n" +
+        (warn.length ? "⚠ " + warn.join("\n⚠ ") + "\n\n" : "") +
+        "If no download appeared, tap Copy Manifest JSON and paste it into a file.\n\n" + text,
+        warn.length ? "bad" : "ok");
+    } catch (err) {
+      setOut(out, "Could not build manifest: " + (err && err.message || err), "bad");
+    }
+  }
+  async function copyManifest() {
+    const out = $("manifestOut");
+    if (!state.lastManifest) {
+      if (needsCrypto(out)) return;
+      state.lastManifest = JSON.stringify(await buildManifest(), null, 2) + "\n";
+    }
+    const ok = await copyText(state.lastManifest);
+    setOut(out, (ok ? "Manifest copied to clipboard.\n\n" : "Copy blocked — press and hold to select.\n\n") + state.lastManifest, ok ? "ok" : "bad");
+  }
+
+  /* ---------- 7. setup ---------- */
+  const SETUP_FIELDS = () => {
+    const c = cfg();
+    return [
+      ...c.evidence.map((e) => ({ key: "cid:" + e.id, label: e.title + " CID", value: isSet(e.cid) ? e.cid : "" })),
+      { key: "mcc", label: "master.html CID (after uploading it to Pinata)", value: c.masterControlCenterCid || "" },
+      { key: "q:backend", label: "IBM backend name", value: isSet(c.quantum.backend) ? c.quantum.backend : "" },
+      { key: "q:job_id", label: "IBM job ID", value: isSet(c.quantum.job_id) ? c.quantum.job_id : "" },
+      { key: "q:distribution", label: "Quantum output (distribution string)", value: c.quantum.distribution || "" },
+      { key: "q:sha256", label: "Quantum hash (SHA-256)", value: isSet(c.quantum.sha256) ? c.quantum.sha256 : "" }
+    ];
+  };
+  function renderSetup() {
+    const wrap = $("setupFields"); wrap.textContent = "";
+    SETUP_FIELDS().forEach((f, i) => {
+      const id = "setup_" + i;
+      const l = document.createElement("label"); l.htmlFor = id; l.textContent = f.label;
+      const inp = document.createElement("input");
+      inp.id = id; inp.dataset.key = f.key; inp.value = f.value;
+      inp.autocapitalize = "off"; inp.autocomplete = "off"; inp.spellcheck = false; inp.setAttribute("autocorrect", "off");
+      wrap.append(l, inp);
+    });
+  }
+  function saveSetup() {
+    const o = { cids: {}, quantum: {} }; const problems = [];
+    $("setupFields").querySelectorAll("input").forEach((inp) => {
+      const v = inp.value.trim(); const k = inp.dataset.key;
+      if (k.startsWith("cid:")) { if (v) { if (!isCid(v)) problems.push(k.slice(4) + " CID looks wrong"); o.cids[k.slice(4)] = v; } }
+      else if (k === "mcc") { if (v && !isCid(v)) problems.push("master.html CID looks wrong"); o.masterControlCenterCid = v; }
+      else if (k.startsWith("q:")) { if (v) o.quantum[k.slice(2)] = k === "q:sha256" ? v.toLowerCase() : v; }
+    });
+    if (o.quantum.sha256 && !HEX64_RE.test(o.quantum.sha256)) problems.push("Quantum hash must be 64 hex characters");
+    const saved = saveOverrides(o);
+    renderEvidence(); renderHash(); state.lastManifest = null;
+    setOut($("setupOut"), (saved ? "Saved on this device." : "Could not save (private browsing?). Values apply until reload.") +
+           (problems.length ? "\n⚠ " + problems.join("\n⚠ ") : ""), problems.length || !saved ? "bad" : "ok");
+  }
+  function resetSetup() {
+    try { localStorage.removeItem(STORE_KEY); } catch (_) {}
+    renderSetup(); renderEvidence(); renderHash(); state.lastManifest = null;
+    setOut($("setupOut"), "Reset to the values in the file.", "ok");
+  }
+
+  /* ---------- wire up ---------- */
+  $("thresholdLbl").textContent = CONFIG.assessment.threshold;
+  $("btnWallet").addEventListener("click", connectWallet);
+  $("btnHash").addEventListener("click", hashQuantum);
+  $("btnCopyHash").addEventListener("click", copyHash);
+  $("btnKey").addEventListener("click", generateKey);
+  $("btnAssess").addEventListener("click", runAssessment);
+  $("btnManifest").addEventListener("click", downloadManifest);
+  $("btnCopyManifest").addEventListener("click", copyManifest);
+  $("btnSave").addEventListener("click", saveSetup);
+  $("btnReset").addEventListener("click", resetSetup);
+
+  const q0 = cfg().quantum.distribution;
+  if (q0) $("qOutput").value = q0;
+  renderEvidence(); renderHash(); renderSetup();
+})();
+</script>
+</body>
+</html>
