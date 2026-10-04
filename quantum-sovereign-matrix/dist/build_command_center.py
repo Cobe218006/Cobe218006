@@ -9,8 +9,13 @@ def read(p):
 def b64(s):
     return base64.b64encode(s.encode("utf-8")).decode("ascii")
 
+def read_binary_b64(p):
+    with open(os.path.join(ROOT, p), "rb") as f:
+        return base64.b64encode(f.read()).decode("ascii")
+
 master_html = read("master.html")
 verify_html = read("enterprise/public/verify.html")
+logo_512_b64 = read_binary_b64("assets/logo-512.webp")
 
 code_files = [
     ("contract", "enterprise/contracts/GenesisRegistryV2.sol", "contracts/GenesisRegistryV2.sol"),
@@ -80,6 +85,7 @@ html_out.append("""<!DOCTYPE html>
 <body>
 <div class="container">
   <header>
+    <img id="wrapperLogo" style="display:block;width:72px;height:72px;margin:0 auto 10px;border-radius:50%;box-shadow:0 2px 10px rgba(0,0,0,.5);" alt="Battleborn Vegas Corporate Curators" width="72" height="72">
     <h1>Quantum Sovereign Matrix</h1>
     <div class="sub">Command Center &middot; built from this repo's tested source, not retyped</div>
   </header>
@@ -169,6 +175,7 @@ html_out.append("""<!DOCTYPE html>
 
 html_out.append(f'  document.getElementById("masterFrame").srcdoc = b64dec("{b64(master_html)}");\n')
 html_out.append(f'  document.getElementById("verifyFrame").srcdoc = b64dec("{b64(verify_html)}");\n')
+html_out.append(f'  document.getElementById("wrapperLogo").src = "data:image/webp;base64,{logo_512_b64}";\n')
 
 html_out.append("""
   // Embedded source files, base64-encoded so copy-to-clipboard restores the
