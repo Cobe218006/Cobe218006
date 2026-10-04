@@ -82,28 +82,30 @@ identical bytes regardless of which language signed and which verified. See
   optionally an on-chain `GenesisRegistryV2` record (hash, status, CID,
   proofType all independently checked; a configured-but-failing chain check
   blocks the verdict, it is never treated the same as "not configured").
+- `backend/api.py` — the FastAPI backend: `POST /api/quantum/execute`,
+  `POST /api/ipfs/pin`, `POST /api/chain/verify`. Every response is
+  `{ok:true,data:{...}}` or `{ok:false,error:{code,message}}`; no endpoint
+  ever returns a stack trace or a fabricated result. Run with
+  `uvicorn backend.api:app --reload`.
+- `backend/pinning.py` — a Pinata client (`pin_json`) with a test-overridable
+  `base_url`, used by `/api/ipfs/pin`. Any other pinning service (web3.storage,
+  Filebase, your own Kubo node) can replace it with its own small client —
+  nothing elsewhere in the protocol is Pinata-specific.
+- `requirements.txt` — everything needed to run the proof engine and the API
+  layer: `pip install -r requirements.txt`.
+- `tests/test_api.py` — 9 pytest cases covering all three endpoints,
+  including the fail-closed paths (no IBM token, no Pinata JWT, unreachable
+  RPC, malformed digest, malformed request body) and real-infrastructure
+  paths (a real local HTTP server for pinning, a real local chain for
+  chain-verify — see **Status**).
 - `frontend/src/App.jsx` — a reference React dashboard (wallet connect,
   trigger a quantum run via a backend endpoint, anchor the result,
   browse evidence CIDs). **Not a runnable app by itself** — it has no
   `package.json` or build config; drop it into an existing Vite/CRA/Next
-  project with `ethers` v6 and Tailwind installed.
+  project with `ethers` v6 and Tailwind installed. It expects the
+  `backend/api.py` endpoints above to be running somewhere it can reach.
 
-## What you still need to build
-
-This layer does **not** include a server. `App.jsx` calls
-`POST /api/quantum/execute` — you implement that endpoint yourself, calling:
-
-```python
-from backend.proof_engine import ProofEngine
-
-engine = ProofEngine()  # reads IBM_QUANTUM_TOKEN, ECDSA_PRIVATE_KEY_PEM from env
-result = engine.execute_ghz5_circuit()          # runs on real IBM hardware
-manifest = engine.build_proof_manifest("QUANTUM_GHZ", result)
-# pin `manifest` to IPFS yourself (e.g. Pinata's API), then return:
-# { "manifest": manifest, "ipfsCid": "<cid returned by your pinning call>" }
-```
-
-Secrets (`IBM_QUANTUM_TOKEN`, `ECDSA_PRIVATE_KEY_PEM`, your Pinata key) belong
+Secrets (`IBM_QUANTUM_TOKEN`, `ECDSA_PRIVATE_KEY_PEM`, your Pinata JWT) belong
 in your backend's environment/secret manager — never in this repo, never in
 a chat.
 
@@ -264,32 +266,60 @@ concept in the registry. Added:
   retrieved bytes (`CONTENT RETRIEVED FROM GATEWAY — CID NOT LOCALLY
   RECOMPUTED`) rather than overclaiming CID verification it isn't doing.
 
-## Scope: what's built vs. what's an integration boundary
+## Scope: what's built, what's substituted, what's an integration boundary
 
 A fuller specification for this layer additionally asked for a complete
 Next.js application — `/app` routes, `/api/quantum/execute`,
 `/api/ipfs/pin`, `/api/chain/verify`, server-side secret handling, W3C
-DID/VC compliance, Vercel deployment, and more. Building that would mean
-writing server code against IBM Quantum, Pinata, and an RPC provider that
-this environment has no credentials for, and calling it "done" without ever
-running it — which is exactly the kind of overclaim this whole layer exists
-to prevent. Instead, consistent with "if a real external credential is
-required but unavailable: implement the integration boundary, provide
-`.env.example`, provide explicit setup instructions, use clearly marked
-demo mode, fail closed for production verification":
+DID/VC compliance, Vercel deployment, and more. Rather than writing that
+shell untested (the original gap this section described), the API routes
+are now built as a **FastAPI backend** (`backend/api.py`) instead of
+Next.js — same role, same endpoint names, one runtime instead of two since
+it's the same language as `proof_engine.py`, and genuinely testable here.
+Everything below that doesn't name a specific missing credential has an
+automated test exercising it for real; see **Status**.
 
-- **Built and tested for real**: `ProofEngine` (the integration boundary
-  itself — the exact functions a real `/api/quantum/execute` route would
-  call), the manifest schema, proof-type validation, demo mode,
-  `GenesisRegistryV2.sol`, and `verify.html` (which needs no backend at
-  all — it's the "usable without a centralized verification database" piece
-  explicitly called for).
-- **Not built**: the Next.js app shell, its API routes, and anything
-  requiring W3C VC/DID spec compliance (the `signer`/`credential` fields
-  are shaped to be compatible with that work, not a claim of conformance to
-  it).
-- **`.env.example`** lists every secret a real deployment would need, with
-  no real values and a reminder never to expose them client-side.
+- **`POST /api/quantum/execute`** — calls `ProofEngine`, returns a signed
+  manifest or a structured `{ok:false, error:{code,message}}` on any
+  failure (no IBM token, no backend, no job id, a payload that fails its
+  proof-type schema). Confirmed over a real running `uvicorn` process (not
+  just an in-process test client) that an unconfigured token fails closed
+  with `QUANTUM_EXECUTION_FAILED`, never a fabricated result.
+- **`POST /api/ipfs/pin`** — pins via `backend/pinning.py` (Pinata's
+  `pinJSONToIPFS`). Fails closed with `PINNING_NOT_CONFIGURED` if
+  `PINATA_JWT` isn't set. The request this code actually builds (headers,
+  JSON body shape) and its response parsing are verified against a real
+  local HTTP server the test suite spins up itself — not a mock library —
+  so the client code is proven correct independent of having a real Pinata
+  credential, which this environment doesn't have.
+- **`POST /api/chain/verify`** — reads `GenesisRegistryV2.verifyProof` via
+  **web3.py** (chosen over ethers.js for the same one-runtime reason).
+  Tested against a real local chain: deploys the actual compiled contract,
+  anchors a record, and confirms the endpoint correctly reports `Active`
+  for it and `NonExistent` for a hash that was never anchored. Fails closed
+  with `CHAIN_CHECK_FAILED` on an unreachable RPC and `INVALID_DIGEST` on a
+  malformed hash — confirmed live over HTTP, not just asserted.
+- Every response follows `{ok:true,data:{...}}` /
+  `{ok:false,error:{code,message}}`, including FastAPI's own request-body
+  validation errors — its default `{"detail":[...]}` shape was found
+  breaking that contract on this endpoint during testing and is now
+  normalized (see `validation_exception_handler` and the regression test
+  pinning it), and an unhandled exception falls back to that same shape
+  with no stack trace ever reaching the client.
+- **Still an integration boundary, not built**: anything requiring a real
+  `IBM_QUANTUM_TOKEN`, `PINATA_JWT`, or a mainnet/testnet RPC with a funded
+  key — those need credentials this environment doesn't have. Also not
+  built: a Next.js/Vercel deployment specifically (this substitutes a
+  different, equally real backend instead) and W3C VC/DID spec compliance
+  (the `signer`/`credential` fields are shaped to be compatible with that
+  work, not a claim of conformance to it).
+- **`.env.example`** lists every secret a real deployment would need
+  (`PINATA_BASE_URL` added as the pinning client's test-only override
+  point), with no real values and a reminder never to expose them
+  client-side.
+- **`requirements.txt`** lists everything needed to run both the proof
+  engine and this API layer: `pip install -r requirements.txt`, then
+  `uvicorn backend.api:app --reload`.
 
 ## Status
 
@@ -297,12 +327,25 @@ Verified in this environment (not just unit tests in isolation — an actual
 local chain, actual headless-browser runs of each HTML page, and
 cross-library checks):
 
-- `pytest tests/test_proof_engine.py` → **12 passed**: the 7 from the v2
-  protocol-correction round plus 5 new ones covering schema shape,
-  fail-closed validation on an unknown proof type, fail-closed validation
-  on an incomplete domain payload, all four proof types accepting a minimal
-  valid payload, the demo manifest being flagged yet still cryptographically
-  genuine, and `record_anchor`'s no-default-values guarantee.
+- `pytest tests/` → **21 passed**: 12 in `test_proof_engine.py` (the 7 from
+  the v2 protocol-correction round plus 5 covering schema shape, fail-closed
+  validation on an unknown proof type, fail-closed validation on an
+  incomplete domain payload, all four proof types accepting a minimal valid
+  payload, the demo manifest being flagged yet still cryptographically
+  genuine, and `record_anchor`'s no-default-values guarantee) plus 9 in
+  `test_api.py` (below).
+- `backend/api.py` run as a real `uvicorn` process (not just an in-process
+  test client) and hit with `curl`: confirmed `POST /api/quantum/execute`
+  fails closed with `QUANTUM_EXECUTION_FAILED` with no `IBM_QUANTUM_TOKEN`,
+  `POST /api/ipfs/pin` fails closed with `PINNING_NOT_CONFIGURED` with no
+  `PINATA_JWT`, and `POST /api/chain/verify` correctly reads a real anchored
+  record off a real local chain. `pytest tests/test_api.py` additionally
+  confirms `pin_json`'s actual HTTP request against a real local fake
+  pinning server (headers, body shape) and its response parsing, and found
+  and fixed a real bug along the way: FastAPI's default validation-error
+  body (`{"detail":[...]}`) broke the `{ok,error}` contract on malformed
+  requests until a handler was added to normalize it — now pinned by its
+  own regression test.
 - `GenesisRegistryV2.sol` compiles clean under solc 0.8.26 (default
   settings — no EVM-version pin needed for a real network; `london` was
   used only to work around an old local test-chain's missing PUSH0 support).
