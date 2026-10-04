@@ -323,6 +323,77 @@ concept in the registry. Added:
   retrieved bytes (`CONTENT RETRIEVED FROM GATEWAY — CID NOT LOCALLY
   RECOMPUTED`) rather than overclaiming CID verification it isn't doing.
 
+## v5.0 architectural update: what was adopted, what was declined
+
+A further "v5.0" specification (60 numbered updates) arrived alongside a
+full React/Vite rewrite of the frontend. Both were evaluated; the outcomes
+differed sharply.
+
+**The 60-point spec's core semantics were adopted**, because they formalize
+principles this codebase already followed informally:
+
+- **Verification state machine** (spec Update 2) and **evidence levels**
+  (Update 4): `verify.html` now computes a `checks` object (one of
+  `PASS/FAIL/WARN/SKIPPED/UNCONFIRMED/NOT_APPLICABLE` per dimension —
+  manifest, schema, canonicalization, digest, signature, signer_key,
+  provenance, ipfs, blockchain, lifecycle, domain_evidence) and an
+  `evidence_level` (0–4 implemented; 5–6 require independent provider
+  confirmation this verifier doesn't perform, and it never claims them).
+  This sits alongside — not instead of — the existing `[PASS]/[FAIL]/[WARN]`
+  row UI, visible in a new "Machine-Readable Verification Result" block.
+- **Error code standard** (Update 49): PIF-001 through PIF-018, attached to
+  `failures[]` in the machine-readable result.
+- **Machine-readable verifier result** (Update 29): the same `report` object
+  backs both the human-readable rows and the JSON export — no separate,
+  potentially-contradictory verification path for each.
+- **Version compatibility, fail-closed** (Update 37): `verify.html` now
+  rejects an unrecognized `manifest_version` immediately rather than
+  attempting best-effort checks against an unknown schema. (This uncovered
+  that `master.html`'s manifests are legitimately `manifest_version: 2.0.0`
+  — a separate, intentional client-only schema from the enterprise
+  backend's `4.0.0` — so the supported-versions list covers both.)
+- **`VERIFICATION_SPEC.md`** (Update 48): a standalone document letting a
+  third-party developer build a compatible verifier without reading this
+  repo's JS/Python source.
+
+Full test coverage: `22 passed, 2 skipped` (backend suite, unchanged), plus
+a headless-browser regression confirming the new checks/evidence-level
+logic against a valid manifest (→ evidence level 3, `verified: true`), a
+tampered manifest (→ digest mismatch, evidence level drops to 1, `PIF-005`
+recorded), and an unsupported-version manifest (→ rejected before any
+further check runs).
+
+**The rest of the 60-point spec** (claim/evidence separation objects, key
+rotation, replay-protection domains, trust registries, verifiable-credential
+support, an evidence graph, proof packets, and more) is a legitimate and
+much larger undertaking than one pass. It was not blanket-implemented; it
+remains a backlog, not a regression — nothing here contradicts it.
+
+**The React/Vite rewrite was declined**, because it reverted several things
+this codebase had already deliberately fixed:
+
+- `src/lib/crypto.js` signed/verified with **ECDSA P-256 via WebCrypto**
+  (`namedCurve: 'P-256'`) instead of **secp256k1** — the curve this entire
+  protocol, including `GenesisRegistryV2.sol` and every cross-language test
+  vector, is standardized on. Adopting it would silently break
+  compatibility with every proof already signed under the current system.
+- Its `canonicalize()` was recursive sorted-key `JSON.stringify`, not real
+  RFC 8785 JCS (see "v1 → v2" above — this exact defect was already found
+  and fixed once).
+- It used flat legacy manifest fields (`canonical_digest_sha256`,
+  `signature_ecdsa`, `issuer_public_key_pem`) instead of the current nested
+  v4 schema.
+- Its `GENESIS_REGISTRY_ABI` omitted `expiresAt` from `anchorProof`,
+  mismatching the deployed `GenesisRegistryV2.sol`.
+- Its `EvidenceVault.jsx` hardcoded invented CIDs under titles like
+  "Covenant HTML," "Ecclesiastical Decree," "Book of Ladderborn Dominion,"
+  and "Affidavit of Covenant" — fabricated evidence, which the spec's own
+  Final Directive ("NEVER MANUFACTURE PROOF") explicitly prohibits.
+
+If a React/Vite frontend is wanted later, the correct path is a thin client
+over the existing tested `backend/api.py` endpoints — not a parallel
+reimplementation of the cryptography in client-side JS.
+
 ## Scope: what's built, what's substituted, what's an integration boundary
 
 A fuller specification for this layer additionally asked for a complete

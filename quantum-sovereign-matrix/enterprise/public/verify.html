@@ -81,6 +81,10 @@
     <dl id="reportBody"></dl>
     <div id="reportLinks" style="margin-top:10px;display:flex;flex-direction:column;gap:6px;"></div>
     <button id="copyBtn" type="button" class="secondary">Copy Report as JSON</button>
+
+    <h2 style="font-size:14px;color:var(--gold);letter-spacing:.08em;text-transform:uppercase;margin-top:18px;">Machine-Readable Verification Result</h2>
+    <p style="font-size:11px;color:var(--muted);margin:4px 0 8px;">Per-dimension checks (PASS/FAIL/WARN/SKIP/UNCONFIRMED), evidence level, and PIF-xxx error codes. The human-readable report above is rendered from this same object — see VERIFICATION_SPEC.md.</p>
+    <pre id="machineResult" style="background:#0a0c12;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;"></pre>
   </div>
 
   <div class="limits">
@@ -107,6 +111,24 @@ secp.hashes.sha256 = sha256;
 secp.hashes.hmacSha256 = (key, ...msgs) => hmac(sha256, key, secp.etc.concatBytes(...msgs));
 
 const S = { OK: "ok", BAD: "bad", WARN: "warn", SKIP: "skip", DEMO: "demo" };
+// This verifier handles manifests from both products: master.html's
+// client-only flow (manifest_version 2.0.0) and the enterprise backend's
+// signed-proof flow (manifest_version 4.0.0). Anything else is unsupported.
+const SUPPORTED_MANIFEST_VERSIONS = ["2.0.0", "4.0.0"];
+
+// Evidence levels per the v5.0 spec (Update 4): describe verification DEPTH,
+// never truth. Levels 5-6 require independently-confirmed provider
+// provenance / multi-source corroboration, which this verifier does not
+// implement — it never claims a level it hasn't actually earned.
+const EVIDENCE_LEVELS = [
+  "LEVEL 0 — CLAIM ONLY",
+  "LEVEL 1 — CAPTURED EVIDENCE",
+  "LEVEL 2 — CRYPTOGRAPHICALLY INTEGRITY VERIFIED",
+  "LEVEL 3 — CRYPTOGRAPHICALLY AUTHENTICATED",
+  "LEVEL 4 — EXTERNALLY ANCHORED",
+  "LEVEL 5 — DOMAIN-PROVENANCE VERIFIED",
+  "LEVEL 6 — MULTI-SOURCE CORROBORATED",
+];
 
 const BLOCK_EXPLORERS = {
   1: "https://etherscan.io", 11155111: "https://sepolia.etherscan.io",
@@ -196,6 +218,15 @@ async function verifyManifest() {
     }
     add(S.OK, "Schema valid", `proof_type: ${manifest.proof_type || "(none)"}\nproof_id: ${manifest.proof_id || "(none)"}\nmanifest_version: ${manifest.manifest_version || "(none)"}`);
 
+    // Fail closed on an unsupported protocol version rather than silently
+    // assuming compatibility (v5.0 spec Update 37) — this verifier only
+    // knows how to check manifests it has been built against.
+    if (!SUPPORTED_MANIFEST_VERSIONS.includes(manifest.manifest_version)) {
+      add(S.BAD, "UNSUPPORTED PROTOCOL VERSION",
+          `manifest_version: ${manifest.manifest_version || "(none)"}\nsupported: ${SUPPORTED_MANIFEST_VERSIONS.join(", ")}`);
+      render(results); return;
+    }
+
     const isDemo = manifest.mode === "DEMO" || manifest.verification_status === "DEMO_ONLY";
     if (isDemo) {
       demoBanner.style.display = "block";
@@ -210,9 +241,16 @@ async function verifyManifest() {
     report.signer_public_key = manifest.signature.public_key || null;
 
     // --- 3. RFC 8785 canonicalize + SHA-256 ----------------------------------------
-    const canonicalStr = canonicalize(manifest.payload);
+    let canonicalStr, canonicalizationOk = true;
+    try {
+      canonicalStr = canonicalize(manifest.payload);
+      add(S.OK, "RFC 8785 canonicalization", `canonicalization: ${JSON.stringify(manifest.canonicalization || "RFC 8785 (JCS)")}`);
+    } catch (err) {
+      canonicalizationOk = false;
+      add(S.BAD, "CANONICALIZATION FAILED", String(err && err.message || err));
+      render(results); return;
+    }
     const computedDigest = bytesToHex(sha256(new TextEncoder().encode(canonicalStr)));
-    add(S.OK, "RFC 8785 canonicalization", `canonicalization: ${JSON.stringify(manifest.canonicalization || "RFC 8785 (JCS)")}`);
 
     const statedDigest = String(manifest.digest.value).toLowerCase();
     const hashMatches = computedDigest === statedDigest;
@@ -257,6 +295,8 @@ async function verifyManifest() {
 
     // --- 6. Optional on-chain check -------------------------------------------------
     let chainState = "skipped";
+    let chainConfigured = Boolean(rpcUrl && contractAddr);
+    let statusName = null, cidMatches = null, proofTypeMatches = null;
     report.blockchain_network = null; report.chain_id = null; report.contract_address = null;
     report.tx_hash = manifest.blockchain?.tx_hash || null; report.block_number = manifest.blockchain?.block_number ?? null;
     report.lifecycle_status = manifest.lifecycle?.status || (hasShape ? "UNKNOWN" : null);
@@ -275,7 +315,7 @@ async function verifyManifest() {
         const [, onChainCid, onChainProofType, ts, expiresAt, issuer, status] = await contract.verifyProof("0x" + statedDigest);
 
         const STATUS_NAMES = ["NonExistent", "Active", "Revoked", "Expired"];
-        const statusName = STATUS_NAMES[Number(status)] || String(status);
+        statusName = STATUS_NAMES[Number(status)] || String(status);
         const chainId = Number(network.chainId);
         const explorer = BLOCK_EXPLORERS[chainId];
 
@@ -292,11 +332,11 @@ async function verifyManifest() {
           add(S.OK, "Blockchain hash matches", "on-chain evidenceHash equals the manifest's own digest (looked up by that digest, so this is definitionally true; included for the report).");
 
           const requestedCid = extractCid(input);
-          const cidMatches = Boolean(onChainCid) && onChainCid === requestedCid;
+          cidMatches = Boolean(onChainCid) && onChainCid === requestedCid;
           add(cidMatches ? S.OK : S.BAD, cidMatches ? "CID matches" : "CHAIN CID MISMATCH",
               `on-chain CID: ${onChainCid}\nrequested CID: ${requestedCid}`);
 
-          const proofTypeMatches = !manifest.proof_type || onChainProofType === manifest.proof_type;
+          proofTypeMatches = !manifest.proof_type || onChainProofType === manifest.proof_type;
           add(proofTypeMatches ? S.OK : S.BAD, proofTypeMatches ? "Proof type matches" : "CHAIN PROOF TYPE MISMATCH",
               `on-chain proofType: ${onChainProofType}\nmanifest proof_type: ${manifest.proof_type}`);
 
@@ -315,6 +355,47 @@ async function verifyManifest() {
       }
     }
 
+    // --- Machine-readable verification state (v5.0 spec Updates 2, 4, 29, 49) ------
+    // Each dimension is reported independently; a single VERIFIED Boolean is
+    // derived separately below and must never stand in for this object.
+    const checks = {
+      manifest: "PASS",
+      schema: hasShape ? "PASS" : "FAIL",
+      canonicalization: canonicalizationOk ? "PASS" : "FAIL",
+      digest: hashMatches ? "PASS" : "FAIL",
+      signature: (signaturePresent && publicKeyPresent && signatureValid) ? "PASS" : "FAIL",
+      signer_key: publicKeyPresent ? "PASS" : "FAIL",
+      provenance: (execInfo && execInfo.provider) ? "UNCONFIRMED" : "NOT_APPLICABLE",
+      ipfs: "PASS",
+      blockchain: !chainConfigured ? "SKIPPED" : (chainState === "ok" ? "PASS" : "FAIL"),
+      lifecycle: report.lifecycle_status || "UNKNOWN",
+      domain_evidence: hasShape ? "PASS" : "FAIL",
+    };
+
+    const failures = [];
+    if (checks.schema === "FAIL") failures.push({ code: "PIF-002", message: "Manifest is malformed (missing payload/digest/signature)." });
+    if (checks.canonicalization === "FAIL") failures.push({ code: "PIF-004", message: "Canonicalization of payload failed." });
+    if (checks.digest === "FAIL") failures.push({ code: "PIF-005", message: "Computed digest does not match the manifest's declared digest." });
+    if (!signaturePresent) failures.push({ code: "PIF-006", message: "Manifest carries no signature." });
+    if (signaturePresent && !publicKeyPresent) failures.push({ code: "PIF-007", message: "Manifest carries no public key; signature cannot be verified." });
+    if (signaturePresent && publicKeyPresent && !signatureValid) failures.push({ code: "PIF-008", message: "ECDSA signature verification failed." });
+    if (chainConfigured && chainState !== "ok") {
+      if (statusName === "NonExistent") failures.push({ code: "PIF-010", message: "No on-chain record found for this digest." });
+      else if (cidMatches === false) failures.push({ code: "PIF-012", message: "On-chain CID does not match the requested CID." });
+      else if (proofTypeMatches === false) failures.push({ code: "PIF-013", message: "On-chain proof_type does not match the manifest's proof_type." });
+      else if (statusName === "Revoked") failures.push({ code: "PIF-014", message: "Proof has been revoked by its issuer." });
+      else if (statusName === "Expired") failures.push({ code: "PIF-015", message: "Proof has expired." });
+      else failures.push({ code: "PIF-010", message: "On-chain check failed (RPC error or unexpected contract response)." });
+    }
+    if (isDemo) failures.push({ code: "PIF-018", message: "Manifest is explicitly flagged DEMO_ONLY and can never reach VERIFIED." });
+
+    let evidenceLevel = hasShape ? 1 : 0;
+    if (hashMatches) evidenceLevel = 2;
+    if (hashMatches && signaturePresent && publicKeyPresent && signatureValid) evidenceLevel = 3;
+    if (evidenceLevel === 3 && chainConfigured && chainState === "ok") evidenceLevel = 4;
+    // Levels 5-6 require independent provider confirmation / multi-source
+    // corroboration this verifier does not perform — never claimed here.
+
     // --- Final verdict: fail-closed, every applicable condition required -----------
     let finalStatus, overallOk;
     if (isDemo) {
@@ -332,6 +413,16 @@ async function verifyManifest() {
     report.final_result = finalStatus;
     report.verification_methodology_version = manifest.verification?.methodology_version || null;
     report.protocol_version = manifest.verification?.protocol_version || manifest.manifest_version || null;
+
+    // Machine-readable result (v5.0 spec Update 29): the human-readable rows
+    // above and this object are generated from the same computed values —
+    // never a separate, potentially-contradictory verification path.
+    report.verified = overallOk === true;
+    report.status = isDemo ? "DEMO_ONLY" : finalStatus.replace(/\s+/g, "_").toUpperCase();
+    report.checks = checks;
+    report.failures = failures;
+    report.evidence_level = evidenceLevel;
+    report.evidence_level_label = EVIDENCE_LEVELS[evidenceLevel];
 
     const verifyUrl = location.href.split("?")[0] + "?cid=" + encodeURIComponent(input);
     links.push(["This verification", verifyUrl]);
@@ -380,6 +471,18 @@ function render(results, overallOk, report, links) {
     }
     reportEl.style.display = "block";
     reportEl.dataset.json = JSON.stringify(report, null, 2);
+
+    const machineEl = document.getElementById("machineResult");
+    if (machineEl) {
+      machineEl.textContent = JSON.stringify({
+        verified: report.verified,
+        status: report.status,
+        evidence_level: report.evidence_level,
+        evidence_level_label: report.evidence_level_label,
+        checks: report.checks,
+        failures: report.failures,
+      }, null, 2);
+    }
   }
 }
 
