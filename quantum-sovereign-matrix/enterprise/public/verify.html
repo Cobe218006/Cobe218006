@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Proof Verification Portal</title>
+<style>
+  :root { --bg:#0b0a08; --panel:#15130e; --line:#3a3220; --gold:#d4af37; --gold-hi:#f1d27a; --text:#f3e9c6; --muted:#a99d7a; --ok:#7fd18b; --bad:#ff8a7a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+         padding:env(safe-area-inset-top) 16px calc(32px + env(safe-area-inset-bottom)); }
+  main { max-width:640px; margin:0 auto; }
+  h1 { font-size:22px; color:var(--gold); margin:24px 0 4px; }
+  p.sub { color:var(--muted); font-size:13px; margin:0 0 20px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:0 0 6px; }
+  input { width:100%; font:16px ui-monospace,"SF Mono",Menlo,monospace; color:var(--text); background:#0f0d09;
+          border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  button { width:100%; margin-top:12px; min-height:48px; font:inherit; font-weight:700; color:#1a1406; cursor:pointer;
+           border-radius:12px; border:1px solid #8a6d1e; background:linear-gradient(180deg,var(--gold-hi),var(--gold) 60%,#b8921f); }
+  button:disabled { opacity:.5; }
+  .out { display:none; margin-top:16px; background:#0f0d09; border:1px dashed var(--line); border-radius:10px; padding:12px;
+         font:13px/1.5 ui-monospace,"SF Mono",Menlo,monospace; word-break:break-all; white-space:pre-wrap; }
+  .badge { display:inline-block; padding:4px 10px; border-radius:8px; font-weight:700; font-size:12px; margin-bottom:8px; }
+  .badge.ok { background:rgba(127,209,139,.15); color:var(--ok); border:1px solid rgba(127,209,139,.4); }
+  .badge.bad { background:rgba(255,138,122,.15); color:var(--bad); border:1px solid rgba(255,138,122,.4); }
+  .row span.k { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Zero-Trust Evidence Verifier</h1>
+  <p class="sub">Fetches a manifest from IPFS and recomputes its hash entirely in this browser — nothing is sent anywhere.</p>
+  <div class="panel">
+    <label for="cidInput">IPFS CID or gateway URL</label>
+    <input id="cidInput" type="text" placeholder="bafybei... or https://dweb.link/ipfs/..." autocapitalize="off" autocorrect="off" spellcheck="false">
+    <button id="runBtn" type="button">Run Verification</button>
+    <div id="out" class="out"></div>
+  </div>
+</main>
+<script>
+"use strict";
+/*
+ * Canonicalization MUST match enterprise/backend/proof_engine.py's
+ * canonicalize_and_hash: JSON with sorted object keys and compact
+ * separators. This is a practical subset of canonical JSON, not a
+ * certified RFC 8785 (JCS) implementation — see that module's docstring.
+ */
+function canonicalize(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(canonicalize).join(",") + "]";
+  const keys = Object.keys(value).sort();
+  return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonicalize(value[k])).join(",") + "}";
+}
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function resolveUrl(input) {
+  const v = input.trim();
+  if (/^https?:\/\//i.test(v)) return v;
+  const cid = v.replace(/^ipfs:\/\//i, "");
+  return "https://dweb.link/ipfs/" + cid;
+}
+
+function render(ok, lines) {
+  const out = document.getElementById("out");
+  out.style.display = "block";
+  out.innerHTML = "";
+  const badge = document.createElement("div");
+  badge.className = "badge " + (ok ? "ok" : "bad");
+  badge.textContent = ok ? "✓ HASH MATCHES — TAMPER-FREE" : "✗ HASH MISMATCH OR ERROR";
+  out.appendChild(badge);
+  lines.forEach((l) => { const d = document.createElement("div"); d.className = "row"; d.textContent = l; out.appendChild(d); });
+}
+
+async function verifyManifest() {
+  const btn = document.getElementById("runBtn");
+  const input = document.getElementById("cidInput").value.trim();
+  if (!input) { render(false, ["Enter a CID or gateway URL first."]); return; }
+  if (!window.crypto || !crypto.subtle) { render(false, ["Web Crypto is unavailable — open this page over https://."]); return; }
+
+  btn.disabled = true; btn.textContent = "Verifying…";
+  try {
+    const res = await fetch(resolveUrl(input));
+    if (!res.ok) throw new Error("HTTP " + res.status + " fetching manifest");
+    const manifest = await res.json();
+    if (!manifest || typeof manifest !== "object" || !("payload" in manifest) || !manifest.canonical_digest_sha256) {
+      throw new Error("Not a recognized proof manifest (expected 'payload' and 'canonical_digest_sha256').");
+    }
+
+    const canonicalStr = canonicalize(manifest.payload);
+    const computed = await sha256Hex(canonicalStr);
+    const stated = String(manifest.canonical_digest_sha256).toLowerCase();
+    const ok = computed === stated;
+
+    render(ok, [
+      "Proof type: " + (manifest.proof_type || "(none)"),
+      "Computed hash: " + computed,
+      "Manifest hash: " + stated,
+      manifest.audit_trail && manifest.audit_trail.generated_at ? "Generated at: " + manifest.audit_trail.generated_at : ""
+    ].filter(Boolean));
+  } catch (err) {
+    render(false, ["Error: " + (err && err.message || err)]);
+  } finally {
+    btn.disabled = false; btn.textContent = "Run Verification";
+  }
+}
+
+document.getElementById("runBtn").addEventListener("click", verifyManifest);
+</script>
+</body>
+</html>

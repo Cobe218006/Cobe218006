@@ -17,3 +17,10 @@ pip install "qiskit>=2" qiskit-ibm-runtime
 python qiskit_ghz.py --simulate
 python quantum_hash.py --receipt quantum_receipt.json
 ```
+
+## Enterprise layer (optional)
+
+If you'd rather run the quantum job from your own backend, anchor with a
+content-hash-keyed contract, and serve a React dashboard instead of the
+static `master.html`, see **[enterprise/README.md](enterprise/README.md)**.
+It's a separate path with its own contract ABI — don't mix the two.
