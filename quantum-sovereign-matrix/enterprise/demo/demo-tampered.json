@@ -1,0 +1,64 @@
+{
+  "manifest_version": "4.0.0",
+  "proof_id": "e7ba9183-719c-4bb4-a480-4a7786c17bba",
+  "proof_type": "AI_VISIBILITY_AUDIT",
+  "schema_version": "ai-visibility-audit@1",
+  "payload": {
+    "audit": {
+      "query": "TAMPERED: a different query than what was actually signed",
+      "provider": "anthropic",
+      "model": "claude-demo",
+      "timestamp": "2026-01-01T00:00:00Z",
+      "response_snapshot": "This is placeholder demo output, not a real model response.",
+      "response_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "citations": [],
+      "recommendation_result": {},
+      "methodology_version": "demo-1",
+      "nondeterminism_notice": true
+    }
+  },
+  "canonicalization": {
+    "name": "RFC8785-JCS",
+    "version": "1.0"
+  },
+  "digest": {
+    "algorithm": "SHA-256",
+    "encoding": "hex",
+    "value": "45f99d2b945dacfc8d362cdc08e1a2a128342c1e6dfe15b668587a30056ad6e9"
+  },
+  "signature": {
+    "algorithm": "ECDSA",
+    "curve": "secp256k1",
+    "encoding": "compact-r-s-hex",
+    "value": "fad7b45479c3e5192a411b23509a16c25434a59b21d5c841c2b724e4f8011e4743bc0918ce2651fa3755847ca970e67a98f12ab3c8af8a994950769f9d73106f",
+    "public_key": "04ba7b8c84cd22161f488cbd8fbe573c601cae912ff93346bcbb06544ac01ac080c93ed34de77efa526e36cd22369a62504a1affd51b5eb162148eed69010ace0f"
+  },
+  "signer": {
+    "type": "secp256k1-key",
+    "id": "04ba7b8c84cd22161f488cbd8fbe573c601cae912ff93346bcbb06544ac01ac080c93ed34de77efa526e36cd22369a62504a1affd51b5eb162148eed69010ace0f"
+  },
+  "ipfs": {
+    "cid": null,
+    "gateway_urls": []
+  },
+  "blockchain": {
+    "network": null,
+    "chain_id": null,
+    "contract_address": null,
+    "tx_hash": null,
+    "block_number": null,
+    "anchored_hash": null
+  },
+  "lifecycle": {
+    "status": "ACTIVE",
+    "revoked_at": null,
+    "expires_at": null
+  },
+  "created_at": "2026-10-04T01:40:51.713596+00:00",
+  "verification": {
+    "protocol_version": "4.0.0",
+    "methodology_version": "1.0"
+  },
+  "mode": "DEMO",
+  "verification_status": "DEMO_ONLY"
+}

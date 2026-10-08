@@ -1,0 +1,75 @@
+{
+  "schema": "quantum-sovereign-matrix/manifest@1",
+  "name": "Quantum Sovereign Matrix",
+  "version": "1.0.0",
+  "created_at": "2026-01-01T00:00:00.000Z",
+  "issuer": {
+    "wallet": "0xYOUR_WALLET_ADDRESS",
+    "chain_id": 11155111
+  },
+  "evidence": [
+    {
+      "id": "covenant",
+      "title": "Covenant HTML",
+      "media_type": "text/html",
+      "cid": "bafkreihia55ukenpm2sscpl7p3f424kymtcicby3yvdlyxcqdd76jxkzum",
+      "uri": "ipfs://bafkreihia55ukenpm2sscpl7p3f424kymtcicby3yvdlyxcqdd76jxkzum",
+      "gateway_url": "https://dweb.link/ipfs/bafkreihia55ukenpm2sscpl7p3f424kymtcicby3yvdlyxcqdd76jxkzum"
+    },
+    {
+      "id": "decree",
+      "title": "Ecclesiastical Decree",
+      "media_type": "application/pdf",
+      "cid": "bafkreiacwzkaguyut6zestflo6jsyodl4l3hoh6r32vkygdwqby377wv2a",
+      "uri": "ipfs://bafkreiacwzkaguyut6zestflo6jsyodl4l3hoh6r32vkygdwqby377wv2a",
+      "gateway_url": "https://dweb.link/ipfs/bafkreiacwzkaguyut6zestflo6jsyodl4l3hoh6r32vkygdwqby377wv2a"
+    },
+    {
+      "id": "ladderborn",
+      "title": "Book of the Ladderborn Dominion",
+      "media_type": "application/pdf",
+      "cid": "bafybeifadg4bhays37hc5z52lxefnd5d4gtswk3tt7dbm2npsh247fgljy",
+      "uri": "ipfs://bafybeifadg4bhays37hc5z52lxefnd5d4gtswk3tt7dbm2npsh247fgljy",
+      "gateway_url": "https://dweb.link/ipfs/bafybeifadg4bhays37hc5z52lxefnd5d4gtswk3tt7dbm2npsh247fgljy"
+    },
+    {
+      "id": "ancient_dams",
+      "title": "Ancient Dams GeoJSON",
+      "media_type": "application/geo+json",
+      "cid": "bafkreiezsogq3guntgqqqusdlu4bwjrudjznyzuhqlepzpbcs4uj3ianua",
+      "uri": "ipfs://bafkreiezsogq3guntgqqqusdlu4bwjrudjznyzuhqlepzpbcs4uj3ianua",
+      "gateway_url": "https://dweb.link/ipfs/bafkreiezsogq3guntgqqqusdlu4bwjrudjznyzuhqlepzpbcs4uj3ianua"
+    },
+    {
+      "id": "affidavit",
+      "title": "Affidavit of Covenant",
+      "media_type": "application/pdf",
+      "cid": "bafkreie6xtb3hmxd2fdc2x6ygjmboniah3po72b6didrmziykt4clynnxy",
+      "uri": "ipfs://bafkreie6xtb3hmxd2fdc2x6ygjmboniah3po72b6didrmziykt4clynnxy",
+      "gateway_url": "https://dweb.link/ipfs/bafkreie6xtb3hmxd2fdc2x6ygjmboniah3po72b6didrmziykt4clynnxy"
+    }
+  ],
+  "master_control_center": {
+    "cid": "PASTE_MASTER_HTML_CID_HERE",
+    "uri": "ipfs://PASTE_MASTER_HTML_CID_HERE",
+    "gateway_url": "https://dweb.link/ipfs/PASTE_MASTER_HTML_CID_HERE"
+  },
+  "quantum_verification": {
+    "provider": "IBM Quantum (Open Plan)",
+    "backend": "PASTE_BACKEND_NAME_HERE",
+    "job_id": "PASTE_JOB_ID_HERE",
+    "shots": 1024,
+    "circuit": "GHZ-5 (H q0, CNOT chain q0->q4, measure all)",
+    "distribution": "PASTE_QUANTUM_OUTPUT_STRING_HERE",
+    "hash_algorithm": "SHA-256 over the exact UTF-8 bytes of 'distribution'",
+    "sha256": "PASTE_QUANTUM_HASH_HERE"
+  },
+  "divinity_assessment": {
+    "score": 0,
+    "max": 100,
+    "threshold": 81,
+    "aligned": false,
+    "assessed_at": "2026-01-01T00:00:00.000Z"
+  },
+  "signature": null
+}

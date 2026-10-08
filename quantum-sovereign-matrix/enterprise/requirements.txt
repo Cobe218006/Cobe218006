@@ -1,0 +1,18 @@
+# Core proof engine (already required by backend/proof_engine.py)
+qiskit>=2
+qiskit-ibm-runtime
+ecdsa
+jcs
+
+# API layer (backend/api.py) — the FastAPI substitute for a Next.js /api shell
+fastapi
+uvicorn[standard]
+httpx
+web3>=7
+pydantic
+google-auth  # server-side verification of Google Sign In ID tokens (/api/auth/google)
+py-solc-x    # compiles GenesisRegistryV2.sol for backend/deploy_contract.py
+
+# Tests
+pytest
+pytest-asyncio
